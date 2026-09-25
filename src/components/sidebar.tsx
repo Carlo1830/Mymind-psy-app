@@ -1,0 +1,15 @@
+"use client";
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { Icon, type IconName } from '@/components/icon';
+const sections: { href: string; label: string; detail: string; icon: IconName }[] = [
+  { href: '/dashboard', label: 'Mi consulta', detail: 'Resumen de actividad', icon: 'grid' },
+  { href: '/pacientes', label: 'Pacientes', detail: 'Personas y seguimiento', icon: 'users' },
+  { href: '/calendario', label: 'Calendario', detail: 'Citas y disponibilidad', icon: 'calendar' },
+  { href: '/marketing', label: 'Comunicación', detail: 'Marketing y perfil', icon: 'spark' },
+];
+export function Sidebar() {
+  const path = usePathname(); const router = useRouter(); const [error, setError] = useState('');
+  return <aside className="z-10 flex shrink-0 flex-col border-b border-slate-200 bg-[#fcfcf8] px-5 py-4 md:py-7 md:sticky md:top-0 md:h-screen md:w-64 md:border-r md:border-b-0 xl:w-72"><Link href="/dashboard" className="flex items-center gap-3 px-3 text-2xl font-semibold tracking-tight text-teal-900"><span className="rounded-2xl bg-teal-800 p-2 text-white"><Icon name="leaf" className="size-6" /></span>mymind<span className="-ml-3 text-teal-500">.</span></Link><p className="mt-3 hidden px-3 text-xs md:block tracking-wide text-slate-500">UN ESPACIO PARA TU CONSULTA</p><nav aria-label="Navegación principal" className="mt-4 grid md:mt-8 grid-cols-2 gap-2 md:flex md:flex-col md:gap-3">{sections.map(item => <Link key={item.href} href={item.href} aria-current={path === item.href ? 'page' : undefined} className={`group flex items-center gap-3 rounded-2xl px-3 py-3 transition-colors ${path === item.href ? 'bg-teal-100/70 text-teal-900 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}><Icon name={item.icon} className="size-5 shrink-0" /><span><span className="block text-sm font-semibold">{item.label}</span><span className="mt-0.5 hidden text-[11px] text-slate-500 xl:block">{item.detail}</span></span></Link>)}</nav><div className="mt-8 hidden rounded-2xl md:block border border-teal-100 bg-teal-50 p-4 md:mt-auto"><Icon name="leaf" className="mb-3 size-5 text-teal-700" /><p className="font-serif text-lg text-teal-900">También hay espacio para ti.</p><p className="mt-2 text-xs leading-5 text-slate-500">Organiza tu día, una sesión a la vez.</p></div><Link href="/" className="mt-5 flex items-center gap-3 px-3 py-2 text-sm text-slate-600"><Icon name="globe" className="size-4" />Ver sitio público</Link><button className="mt-1 flex items-center gap-3 px-3 py-2 text-left text-sm text-slate-500" onClick={async () => { try { const response = await fetch('/api/auth/logout', { method: 'POST' }); if (!response.ok) throw new Error(); router.replace('/acceso'); router.refresh(); } catch { setError('No se pudo cerrar la sesión. Inténtalo de nuevo.'); } }}><Icon name="logout" className="size-4" />Cerrar sesión</button>{error && <p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}</aside>;
+}

@@ -1,0 +1,34 @@
+import { requireUser } from '@/lib/auth';
+import { db } from '@/lib/db';
+import { body, estados, failure, InputError, json, patientInput, sameOrigin } from '@/lib/api';
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export async function GET(request: Request) {
+    try {
+        const user = await requireUser();
+        const params = new URL(request.url).searchParams;
+        const search = (params.get('q') || '').trim();
+        const state = params.get('estado') || '';
+        if (state && !estados.includes(state as typeof estados[number]))
+            throw new InputError('Estado inválido.');
+        // JavaScript handles Spanish case and accent folding consistently, unlike SQLite lower().
+        const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
+        const rows = (await db().prepare('SELECT id, nombre_completo, email, telefono, estado, fecha_registro, fuente_captacion, (SELECT c.consentimiento_marketing FROM captaciones c WHERE c.paciente_id = pacientes.id ORDER BY c.creado_en DESC, c.id DESC LIMIT 1) AS consentimiento_marketing FROM pacientes WHERE usuario_id = ? AND (? = ? OR estado = ?) ORDER BY fecha_registro DESC, id DESC').all(user.id, state, '', state));
+        return json(rows.filter(row => normalize(String(row.nombre_completo)).includes(normalize(search))));
+    }
+    catch (error) {
+        return failure(error);
+    }
+}
+export async function POST(request: Request) {
+    try {
+        const user = await requireUser();
+        sameOrigin(request);
+        const values = patientInput(await body(request));
+        const row = (await db().prepare('INSERT INTO pacientes (nombre_completo, email, telefono, estado, motivo_consulta, notas_confidenciales, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *').get(...values, user.id));
+        return json(row, 201);
+    }
+    catch (error) {
+        return failure(error);
+    }
+}
