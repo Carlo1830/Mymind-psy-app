@@ -1,3 +1,4 @@
+export type StatusPaciente = 'active' | 'archived';
 export type EstadoPaciente = 'Nuevo contacto' | 'En evaluación' | 'Tratamiento activo' | 'Inactivo';
 export type EstadoSesion = 'Programada' | 'Realizada' | 'Cancelada';
 
@@ -8,6 +9,7 @@ export interface Paciente {
   email: string | null;
   telefono: string | null;
   estado: EstadoPaciente;
+  status: StatusPaciente;
   motivo_consulta: string | null;
   /** Fecha ISO 8601 en UTC. */
   fecha_registro: string;

@@ -251,6 +251,36 @@ try {
     await request('/api/disponibilidad', 'PUT', { ...availabilityRule, activa: false });
     assert.equal((await request('/api/reservas/disponibilidad')).horarios.length, 0);
     console.log('Landing y reservas verificadas: horario semanal, modalidades, idempotencia, concurrencia, métricas privadas y editor.');
+
+    // Archiving is owner-scoped and preserves clinical records and sessions.
+    cookie = cookieA;
+    const beforeArchive = await request(route);
+    assert.equal(beforeArchive.paciente.status, 'active');
+    await request('/api/pacientes?status=unknown', 'GET', undefined, 400);
+    await request(route, 'PATCH', { status: 'deleted' }, 400);
+    await request(route, 'PATCH', {}, 400);
+    cookie = '';
+    await request(route, 'PATCH', { status: 'archived' }, 401);
+    cookie = cookieB;
+    await request(route, 'PATCH', { status: 'archived' }, 404);
+    cookie = cookieA;
+    const archiveCsrf = await fetch(base + route, { method: 'PATCH', headers: { Cookie: cookieA, Origin: 'https://evil.example', 'Content-Type': 'application/json' }, body: JSON.stringify({status:'archived'}) });
+    assert.equal(archiveCsrf.status, 403);
+    await request(route, 'PATCH', { status: 'archived', usuario_id: accountB.usuario.id, notas_confidenciales: 'Must not change' });
+    assert.ok(!(await request('/api/pacientes')).some(p => p.id === patient.id));
+    assert.equal((await request('/api/pacientes?status=archived&q=MARIA&estado=Tratamiento%20activo'))[0].id, patient.id);
+    const afterArchive = await request(route);
+    assert.deepEqual(afterArchive, { ...beforeArchive, paciente: { ...beforeArchive.paciente, status: 'archived' } });
+    cookie = cookieB;
+    assert.equal((await request('/api/pacientes?status=archived')).length, 0);
+    await request(route, 'PATCH', { status: 'active' }, 404);
+    cookie = cookieA;
+    await request(route, 'PATCH', { status: 'active' });
+    await request(route, 'PATCH', { status: 'active' });
+    assert.ok((await request('/api/pacientes?status=active')).some(p => p.id === patient.id));
+    assert.ok(!(await request('/api/pacientes?status=archived')).some(p => p.id === patient.id));
+    assert.deepEqual(await request(route), beforeArchive);
+    console.log('Archivo verificado: filtros, restauración, privacidad entre profesionales y conservación íntegra de ficha y sesiones.');
     console.log('API verificada: creación, edición, búsqueda, filtros, privacidad del listado, validación, historial y persistencia PostgreSQL.');
 }
 finally {

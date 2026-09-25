@@ -9,11 +9,13 @@ export async function GET(request: Request) {
         const params = new URL(request.url).searchParams;
         const search = (params.get('q') || '').trim();
         const state = params.get('estado') || '';
+        const status = params.get('status') ?? 'active';
+        if (!['active', 'archived'].includes(status)) throw new InputError('Status de paciente inválido.');
         if (state && !estados.includes(state as typeof estados[number]))
             throw new InputError('Estado inválido.');
         // JavaScript handles Spanish case and accent folding consistently, unlike SQLite lower().
         const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
-        const rows = (await db().prepare('SELECT id, nombre_completo, email, telefono, estado, fecha_registro, fuente_captacion, (SELECT c.consentimiento_marketing FROM captaciones c WHERE c.paciente_id = pacientes.id ORDER BY c.creado_en DESC, c.id DESC LIMIT 1) AS consentimiento_marketing FROM pacientes WHERE usuario_id = ? AND (? = ? OR estado = ?) ORDER BY fecha_registro DESC, id DESC').all(user.id, state, '', state));
+        const rows = (await db().prepare('SELECT id, nombre_completo, email, telefono, estado, status, fecha_registro, fuente_captacion, (SELECT c.consentimiento_marketing FROM captaciones c WHERE c.paciente_id = pacientes.id ORDER BY c.creado_en DESC, c.id DESC LIMIT 1) AS consentimiento_marketing FROM pacientes WHERE usuario_id = ? AND status = ? AND (? = ? OR estado = ?) ORDER BY fecha_registro DESC, id DESC').all(user.id, status, state, '', state));
         return json(rows.filter(row => normalize(String(row.nombre_completo)).includes(normalize(search))));
     }
     catch (error) {

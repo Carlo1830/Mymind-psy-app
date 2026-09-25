@@ -145,3 +145,9 @@ Los borradores de contenido son textos originales de carácter general, no instr
 Las pruebas de API también verifican landing pública, dashboard privado, disponibilidad semanal, consentimiento, reservas concurrentes, reintentos, solapamientos, métricas y aislamiento entre profesionales. Se comprobó en navegador una reserva con datos sintéticos y su aparición en el dashboard.
 
 Fuentes de configuración: [clientes SSR de Supabase](https://supabase.com/docs/guides/auth/server-side/creating-a-client), [conexiones PostgreSQL y poolers](https://supabase.com/docs/guides/database/connecting-to-postgres), [ubicación oficial del certificado](https://github.com/supabase/supabase/blob/master/apps/studio/hooks/custom-content/custom-content.json).
+
+### Archivo de pacientes
+
+El listado de `/pacientes` muestra activos por defecto y permite alternar con archivados. `status` (`active` o `archived`) es independiente del estado clínico. Archivar y restaurar conservan contacto, notas y sesiones; archivar no cancela citas. Las acciones están disponibles en tabla, tarjetas y ficha.
+
+`GET /api/pacientes?status=active|archived` combina archivo, búsqueda y estado clínico. `PATCH /api/pacientes/:id` recibe `{ "status": "archived" }` o `{ "status": "active" }`, valida sesión y propietario y modifica únicamente ese campo. Ejecutar `npm run db:migrate` para registrar la migración compatible con la columna añadida manualmente en Supabase.
