@@ -256,6 +256,9 @@ try {
     cookie = cookieA;
     const beforeArchive = await request(route);
     assert.equal(beforeArchive.paciente.status, 'active');
+    const activeList = await request('/api/pacientes');
+    assert.ok(activeList.length > 0);
+    assert.ok(activeList.every(p => Object.hasOwn(p, 'status') && p.status === 'active'));
     await request('/api/pacientes?status=unknown', 'GET', undefined, 400);
     await request(route, 'PATCH', { status: 'deleted' }, 400);
     await request(route, 'PATCH', {}, 400);
@@ -268,7 +271,9 @@ try {
     assert.equal(archiveCsrf.status, 403);
     await request(route, 'PATCH', { status: 'archived', usuario_id: accountB.usuario.id, notas_confidenciales: 'Must not change' });
     assert.ok(!(await request('/api/pacientes')).some(p => p.id === patient.id));
-    assert.equal((await request('/api/pacientes?status=archived&q=MARIA&estado=Tratamiento%20activo'))[0].id, patient.id);
+    const archivedList = await request('/api/pacientes?status=archived&q=MARIA&estado=Tratamiento%20activo');
+    assert.equal(archivedList[0].id, patient.id);
+    assert.ok(archivedList.every(p => Object.hasOwn(p, 'status') && p.status === 'archived'));
     const afterArchive = await request(route);
     assert.deepEqual(afterArchive, { ...beforeArchive, paciente: { ...beforeArchive.paciente, status: 'archived' } });
     cookie = cookieB;

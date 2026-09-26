@@ -15,7 +15,17 @@ export async function GET(request: Request) {
             throw new InputError('Estado inválido.');
         // JavaScript handles Spanish case and accent folding consistently, unlike SQLite lower().
         const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
-        const rows = (await db().prepare('SELECT id, nombre_completo, email, telefono, estado, status, fecha_registro, fuente_captacion, (SELECT c.consentimiento_marketing FROM captaciones c WHERE c.paciente_id = pacientes.id ORDER BY c.creado_en DESC, c.id DESC LIMIT 1) AS consentimiento_marketing FROM pacientes WHERE usuario_id = ? AND status = ? AND (? = ? OR estado = ?) ORDER BY fecha_registro DESC, id DESC').all(user.id, status, state, '', state));
+        // Explicit public list fields: status is returned without clinical notes.
+        const rows = await db().prepare(`
+            SELECT p.id, p.nombre_completo, p.email, p.telefono, p.estado,
+                   p.status AS status, p.fecha_registro, p.fuente_captacion,
+                   (SELECT c.consentimiento_marketing FROM captaciones c
+                    WHERE c.paciente_id = p.id
+                    ORDER BY c.creado_en DESC, c.id DESC LIMIT 1) AS consentimiento_marketing
+            FROM pacientes p
+            WHERE p.usuario_id = ? AND p.status = ? AND (? = ? OR p.estado = ?)
+            ORDER BY p.fecha_registro DESC, p.id DESC
+        `).all(user.id, status, state, '', state);
         return json(rows.filter(row => normalize(String(row.nombre_completo)).includes(normalize(search))));
     }
     catch (error) {
