@@ -1,8 +1,8 @@
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { body, estados, failure, InputError, json, patientInput, sameOrigin } from '@/lib/api';
-export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 export async function GET(request: Request) {
     try {
         const user = await requireUser();
@@ -26,7 +26,25 @@ export async function GET(request: Request) {
             WHERE p.usuario_id = ? AND p.status = ? AND (? = ? OR p.estado = ?)
             ORDER BY p.fecha_registro DESC, p.id DESC
         `).all(user.id, status, state, '', state);
-        return json(rows.filter(row => normalize(String(row.nombre_completo)).includes(normalize(search))));
+        const patients = rows
+            .filter(row => normalize(String(row.nombre_completo)).includes(normalize(search)))
+            .map(row => {
+                if (row.status !== 'active' && row.status !== 'archived') {
+                    throw new Error('Invalid patient status in database response');
+                }
+                return {
+                    id: row.id,
+                    nombre_completo: row.nombre_completo,
+                    email: row.email,
+                    telefono: row.telefono,
+                    estado: row.estado,
+                    status: row.status,
+                    fecha_registro: row.fecha_registro,
+                    fuente_captacion: row.fuente_captacion,
+                    consentimiento_marketing: row.consentimiento_marketing,
+                };
+            });
+        return json(patients);
     }
     catch (error) {
         return failure(error);
