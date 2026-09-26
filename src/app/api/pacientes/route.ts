@@ -18,27 +18,24 @@ export async function GET(request: Request) {
         // Explicit public list fields: status is returned without clinical notes.
         const rows = await db().prepare(`
             SELECT p.id, p.nombre_completo, p.email, p.telefono, p.estado,
-                   p.status AS status, p.fecha_registro, p.fuente_captacion,
+                   COALESCE(p.status, 'active') AS status, p.fecha_registro, p.fuente_captacion,
                    (SELECT c.consentimiento_marketing FROM captaciones c
                     WHERE c.paciente_id = p.id
                     ORDER BY c.creado_en DESC, c.id DESC LIMIT 1) AS consentimiento_marketing
             FROM pacientes p
-            WHERE p.usuario_id = ? AND p.status = ? AND (? = ? OR p.estado = ?)
+            WHERE p.usuario_id = ? AND COALESCE(p.status, 'active') = ? AND (? = ? OR p.estado = ?)
             ORDER BY p.fecha_registro DESC, p.id DESC
         `).all(user.id, status, state, '', state);
         const patients = rows
             .filter(row => normalize(String(row.nombre_completo)).includes(normalize(search)))
             .map(row => {
-                if (row.status !== 'active' && row.status !== 'archived') {
-                    throw new Error('Invalid patient status in database response');
-                }
                 return {
                     id: row.id,
                     nombre_completo: row.nombre_completo,
                     email: row.email,
                     telefono: row.telefono,
                     estado: row.estado,
-                    status: row.status,
+                    status: row.status || 'active',
                     fecha_registro: row.fecha_registro,
                     fuente_captacion: row.fuente_captacion,
                     consentimiento_marketing: row.consentimiento_marketing,

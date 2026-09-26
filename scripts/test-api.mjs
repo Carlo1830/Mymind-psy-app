@@ -285,6 +285,21 @@ try {
     assert.ok((await request('/api/pacientes?status=active')).some(p => p.id === patient.id));
     assert.ok(!(await request('/api/pacientes?status=archived')).some(p => p.id === patient.id));
     assert.deepEqual(await request(route), beforeArchive);
+    // Simulate a legacy nullable column in the isolated test database only.
+    await testDatabase.client.query('ALTER TABLE mymind.pacientes ALTER COLUMN status DROP NOT NULL');
+    await db.prepare('UPDATE pacientes SET status = NULL WHERE id = ?').run(patient.id);
+    const legacyActive = await request('/api/pacientes?status=active');
+    assert.equal(legacyActive.find(p => p.id === patient.id)?.status, 'active');
+    assert.equal((await request('/api/pacientes')).find(p => p.id === patient.id)?.status, 'active');
+    assert.ok(!(await request('/api/pacientes?status=archived')).some(p => p.id === patient.id));
+    cookie = cookieB;
+    assert.ok(!(await request('/api/pacientes')).some(p => p.id === patient.id));
+    cookie = cookieA;
+    await request(route, 'PATCH', { status: 'archived' });
+    assert.equal((await request('/api/pacientes?status=archived')).find(p => p.id === patient.id)?.status, 'archived');
+    await request(route, 'PATCH', { status: 'active' });
+    await testDatabase.client.query('ALTER TABLE mymind.pacientes ALTER COLUMN status SET NOT NULL');
+    console.log('Status nulo verificado: respuesta active, filtros correctos y aislamiento de propietarios.');
     console.log('Archivo verificado: filtros, restauración, privacidad entre profesionales y conservación íntegra de ficha y sesiones.');
     console.log('API verificada: creación, edición, búsqueda, filtros, privacidad del listado, validación, historial y persistencia PostgreSQL.');
 }
