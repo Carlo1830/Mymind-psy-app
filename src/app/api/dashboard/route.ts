@@ -19,7 +19,7 @@ export async function GET() {
           WHERE p.usuario_id = ?
             AND (s.fecha_hora::timestamptz AT TIME ZONE ?)::date = (CURRENT_TIMESTAMP AT TIME ZONE ?)::date
           ORDER BY s.fecha_hora::timestamptz, s.id`).all(user.id, zone, zone);
-        return json({ pacientes_activos: active, citas_semana: appointments, leads_mes: leads, proximas: next, hoy: today, zona_horaria: zone });
+        return json({ nombre: user.nombre, pacientes_activos: active, citas_semana: appointments, leads_mes: leads, proximas: next, hoy: today, zona_horaria: zone });
     }
     catch (e) {
         return failure(e);

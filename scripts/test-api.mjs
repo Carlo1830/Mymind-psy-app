@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { greetingName } from '../src/lib/greeting.ts';
+assert.equal(greetingName('  Carlo  Marrufo '), 'Carlo');
+assert.equal(greetingName('Profesional principal'), null);
+assert.equal(greetingName('  '), null);
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID, createHash } from 'node:crypto';
@@ -48,6 +52,15 @@ try {
     const accountA = await request('/api/auth/register', 'POST', { nombre: 'Profesional A', email: 'profesional-a@example.test', password: 'Test-password-1234!', rol: 'administrador' }, 201);
     assert.equal(accountA.usuario.rol, 'psicologo');
     const cookieA = cookie;
+    const originalProfile = await request('/api/perfil');
+    await request('/api/perfil', 'PUT', { ...originalProfile, nombre: 'Carlo Marrufo' });
+    assert.equal((await request('/api/dashboard')).nombre, 'Carlo Marrufo');
+    const greetingHtml = await (await fetch(base + '/dashboard', { headers: { Cookie: cookieA } })).text();
+    assert.ok(greetingHtml.includes('Hola, Carlo'));
+    assert.ok(!greetingHtml.includes('Hola, Profesional principal'));
+    await request('/api/perfil', 'PUT', originalProfile);
+    assert.equal((await request('/api/dashboard')).nombre, originalProfile.nombre);
+
     for (const page of ['/', '/dashboard', '/pacientes', '/calendario', '/marketing']) {
         const pageResponse = await fetch(base + page, { headers: { Cookie: cookieA } });
         const pageHtml = await pageResponse.text();
@@ -125,6 +138,7 @@ try {
     assert.equal((await request(range)).length, 0);
     assert.equal((await request('/api/marketing/recursos')).length, 0);
     assert.equal((await request('/api/perfil')).nombre, 'Profesional B');
+    assert.equal((await request('/api/dashboard')).nombre, 'Profesional B');
     await request(route, 'GET', undefined, 404);
     await request(route, 'PUT', values, 404);
     await request(route + '/sesiones', 'POST', note, 404);

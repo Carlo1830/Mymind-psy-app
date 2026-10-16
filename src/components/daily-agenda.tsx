@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { greetingName } from '@/lib/greeting';
 
 type Agenda = {
+  nombre: string;
   zona_horaria: string;
   hoy: { id: string; fecha_hora: string; nombre_completo: string; modalidad: string; estado_sesion: string }[];
 };
@@ -30,10 +32,12 @@ export function DailyAgenda({ name }: { name: string }) {
     return () => { controller.abort(); window.clearInterval(timer); window.removeEventListener('focus', load); };
   }, [version]);
 
+  const firstName = greetingName(data ? data.nombre : name);
   const scheduled = data?.hoy.filter(a => a.estado_sesion === 'Programada').length ?? 0;
   return <div className="mx-auto w-full max-w-3xl py-2 sm:py-4">
     <header className="mb-10">
-      <h1 className="font-serif text-3xl text-slate-800 sm:text-4xl">Hola, {name}</h1>
+      <h1 className="font-serif text-3xl text-slate-800 sm:text-4xl">{firstName ? `Hola, ${firstName}` : 'Hola'}</h1>
+      {!firstName && <Link href="/marketing" className="mt-2 inline-block text-xs text-teal-800 underline underline-offset-4">Completa tu nombre en el Perfil Profesional</Link>}
       <p className="mt-3 text-sm leading-relaxed text-slate-500" aria-live="polite">
         {error ? 'Tu agenda no está disponible en este momento.' : data ? scheduled === 0 ? 'Hoy no tienes citas pendientes.' : `Tienes ${scheduled} ${scheduled === 1 ? 'cita programada' : 'citas programadas'} para hoy.` : 'Consultando tu agenda de hoy…'}
       </p>
