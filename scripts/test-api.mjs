@@ -299,6 +299,22 @@ try {
     assert.equal((await request('/api/pacientes?status=archived')).find(p => p.id === patient.id)?.status, 'archived');
     await request(route, 'PATCH', { status: 'active' });
     await testDatabase.client.query('ALTER TABLE mymind.pacientes ALTER COLUMN status SET NOT NULL');
+    // Exercise local-day boundaries, chronological order and ownership in the isolated database.
+    const agendaFixtures = [];
+    for (const seconds of [86400, -1, 54000, 0, 32400, 86399]) {
+        const id = randomUUID();
+        agendaFixtures.push({ id, seconds });
+        await db.prepare("INSERT INTO sesiones (id, paciente_id, fecha_hora, modalidad, estado_sesion) VALUES (?, ?, (((CURRENT_TIMESTAMP AT TIME ZONE 'America/Santiago')::date + (? * INTERVAL '1 second')) AT TIME ZONE 'America/Santiago'), 'Online', ?)").run(id, patient.id, seconds, seconds === 54000 ? 'Cancelada' : seconds === 32400 ? 'Realizada' : 'Programada');
+    }
+    const daily = await request('/api/dashboard');
+    const expectedAgenda = agendaFixtures.filter(a => a.seconds >= 0 && a.seconds < 86400).sort((a, b) => a.seconds - b.seconds);
+    assert.deepEqual(daily.hoy.filter(a => agendaFixtures.some(f => f.id === a.id)).map(a => a.id), expectedAgenda.map(a => a.id));
+    assert.ok(daily.hoy.filter(a => agendaFixtures.some(f => f.id === a.id)).every(a => a.nombre_completo && a.modalidad === 'Online'));
+    cookie = cookieB;
+    assert.ok((await request('/api/dashboard')).hoy.every(a => !agendaFixtures.some(f => f.id === a.id)));
+    cookie = cookieA;
+    for (const fixture of agendaFixtures) await db.prepare('DELETE FROM sesiones WHERE id = ?').run(fixture.id);
+    console.log('Agenda diaria verificada: límites del día local, orden horario, modalidades y aislamiento entre profesionales.');
     console.log('Status nulo verificado: respuesta active, filtros correctos y aislamiento de propietarios.');
     console.log('Archivo verificado: filtros, restauración, privacidad entre profesionales y conservación íntegra de ficha y sesiones.');
     console.log('API verificada: creación, edición, búsqueda, filtros, privacidad del listado, validación, historial y persistencia PostgreSQL.');

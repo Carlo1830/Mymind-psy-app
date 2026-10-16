@@ -27,10 +27,11 @@ export function PatientsCRM() {
   const searchParams = useSearchParams();
   const linkedPatient = searchParams.get('paciente');
   const linkedSession = searchParams.get('sesion');
-  return <PatientsContent key={linkedPatient + ':' + linkedSession} linkedPatient={linkedPatient} linkedSession={linkedSession} />;
+  const createNew = searchParams.get('nuevo') === '1';
+  return <PatientsContent key={linkedPatient + ':' + linkedSession + ':' + createNew} linkedPatient={linkedPatient} linkedSession={linkedSession} createNew={createNew} />;
 }
 
-function PatientsContent({ linkedPatient, linkedSession }: { linkedPatient: string | null; linkedSession: string | null }) {
+function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPatient: string | null; linkedSession: string | null; createNew: boolean }) {
   const [patients, setPatients] = useState<Summary[]>([]);
   const [query, setQuery] = useState('');
   const [state, setState] = useState('');
@@ -48,8 +49,9 @@ function PatientsContent({ linkedPatient, linkedSession }: { linkedPatient: stri
   const [detailError, setDetailError] = useState('');
   const [detailVersion, setDetailVersion] = useState(0);
   const [editing, setEditing] = useState<Paciente | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(createNew);
   const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (createNew) dialog.current?.showModal(); }, [createNew]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [noteError, setNoteError] = useState('');

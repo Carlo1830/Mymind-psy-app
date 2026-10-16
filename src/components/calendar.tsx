@@ -23,12 +23,12 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 const subscribe = () => () => {};
-export function Calendar() {
+export function Calendar({ createNew = false }: { createNew?: boolean }) {
   const mounted = useSyncExternalStore(subscribe, () => true, () => false);
-  return mounted ? <CalendarContent /> : <p role="status">Cargando calendario…</p>;
+  return mounted ? <CalendarContent key={String(createNew)} createNew={createNew} /> : <p role="status">Cargando calendario…</p>;
 }
 
-function CalendarContent() {
+function CalendarContent({ createNew }: { createNew: boolean }) {
   const [anchor, setAnchor] = useState<Date | null>(() => new Date());
   const [view, setView] = useState<'month' | 'week'>('month');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -40,11 +40,12 @@ function CalendarContent() {
   const [version, setVersion] = useState(0);
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<Appointment | null>(null);
-  const [formDate, setFormDate] = useState('');
-  const [formOpen, setFormOpen] = useState(false);
+  const [formDate, setFormDate] = useState(() => createNew ? dateKey(new Date()) : '');
+  const [formOpen, setFormOpen] = useState(createNew);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (createNew) dialog.current?.showModal(); }, [createNew]);
 
 
   const range = useMemo(() => {
