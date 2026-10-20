@@ -12,6 +12,9 @@ export interface Paciente {
   estado: EstadoPaciente;
   status: StatusPaciente;
   motivo_consulta: string | null;
+  antecedentes: string | null;
+  hipotesis_diagnostica: string | null;
+  expediente_version: number;
   /** Fecha ISO 8601 en UTC. */
   fecha_registro: string;
   notas_confidenciales: string | null;

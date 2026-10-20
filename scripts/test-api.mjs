@@ -44,7 +44,7 @@ try {
     }
     assert.ok(ready, output);
     for (const [path, method, payload] of [
-        ['/api/pacientes', 'GET'], ['/api/pacientes/etiquetas', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
+        ['/api/pacientes/nope/expediente', 'PUT', {}], ['/api/pacientes', 'GET'], ['/api/pacientes/etiquetas', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
         ['/api/sesiones?desde=2026-10-01T00:00:00.000Z&hasta=2026-11-01T00:00:00.000Z', 'GET'], ['/api/sesiones', 'POST', {}], ['/api/sesiones/nope', 'PUT', {}],
         ['/api/perfil', 'GET'], ['/api/perfil', 'PUT', {}], ['/api/marketing/plantillas', 'GET'], ['/api/marketing/plantillas', 'PUT', {}],
         ['/api/marketing/recursos', 'GET'], ['/api/marketing/recursos', 'POST', {}], ['/api/marketing/recursos', 'PUT', {}], ['/api/marketing/contenido', 'POST', {}],
@@ -388,6 +388,41 @@ try {
     await testDatabase.client.query(tagsSQL);
     assert.deepEqual((await request(route)).paciente.etiquetas,[]);
     console.log('Patient tags verified: validation, filters, edits, isolation, legacy reads and migration applied twice.');
+    const originalClinical = await request(route);
+    const clinicalPath = route+'/expediente';
+    assert.equal(originalClinical.paciente.antecedentes,originalClinical.paciente.notas_confidenciales);
+    const clinicalValues={motivo_consulta:'Demanda inicial',antecedentes:'Historia previa',hipotesis_diagnostica:'Formulacion y objetivos',expediente_version:originalClinical.paciente.expediente_version};
+    const clinicalSaved=await request(clinicalPath,'PUT',clinicalValues);
+    assert.equal(clinicalSaved.antecedentes,'Historia previa');
+    assert.equal(clinicalSaved.expediente_version,clinicalValues.expediente_version+1);
+    await request(clinicalPath,'PUT',clinicalValues,409);
+    const clinicalDetail=await request(route);
+    assert.equal(clinicalDetail.paciente.notas_confidenciales,originalClinical.paciente.notas_confidenciales);
+    assert.deepEqual(clinicalDetail.sesiones,originalClinical.sesiones);
+    assert.equal((await request('/api/pacientes')).find(p=>p.id===patient.id).antecedentes,undefined);
+    await request(clinicalPath,'PUT',{...clinicalValues,antecedentes:'x'.repeat(20001)},400);
+    await request(clinicalPath,'PUT',{...clinicalValues,expediente_version:-1},400);
+    await request(clinicalPath,'PUT',{expediente_version:clinicalSaved.expediente_version},400);
+    const clinicalCsrf=await fetch(base+clinicalPath,{method:'PUT',headers:{Cookie:cookieA,Origin:'https://evil.example','Content-Type':'application/json'},body:JSON.stringify(clinicalValues)});
+    assert.equal(clinicalCsrf.status,403);
+    cookie=cookieB;
+    await request(clinicalPath,'PUT',{...clinicalValues,expediente_version:clinicalSaved.expediente_version},404);
+    cookie=cookieA;
+    await request(clinicalPath,'PUT',{...clinicalValues,antecedentes:'',expediente_version:clinicalSaved.expediente_version});
+    assert.equal((await request(route)).paciente.antecedentes,null);
+    // Simulate a pre-migration installation with existing notes, only in the isolated database.
+    await testDatabase.client.query("DROP TRIGGER expediente_version ON mymind.pacientes; DROP FUNCTION mymind.expediente_version_update(); ALTER TABLE mymind.pacientes DROP COLUMN antecedentes,DROP COLUMN hipotesis_diagnostica,DROP COLUMN expediente_version; DELETE FROM mymind.schema_migrations WHERE name='202610190003_clinical_record.sql'");
+    const legacyClinical=(await request(route)).paciente;
+    assert.equal(legacyClinical.antecedentes,legacyClinical.notas_confidenciales);
+    await request(clinicalPath,'PUT',{...clinicalValues,expediente_version:0},503);
+    const clinicalSQL=readFileSync('docs/sql/aplicar-expediente-clinico.sql','utf8');
+    await testDatabase.client.query(clinicalSQL);
+    await testDatabase.client.query(clinicalSQL);
+    const migratedClinical=(await request(route)).paciente;
+    assert.equal(migratedClinical.antecedentes,legacyClinical.notas_confidenciales);
+    assert.equal(migratedClinical.notas_confidenciales,legacyClinical.notas_confidenciales);
+    assert.equal(migratedClinical.motivo_consulta,legacyClinical.motivo_consulta);
+    console.log('Clinical record verified: privacy, validation, concurrent edits, preserved notes and migration applied twice.');
     // Reproduce an installation with Phase 1 entirely unapplied, in this test database only.
     await testDatabase.client.query("DROP TRIGGER agenda_email ON mymind.sesiones; DROP TRIGGER agenda_state ON mymind.sesiones; DROP FUNCTION mymind.agenda_queue_email(); DROP FUNCTION mymind.agenda_state(); DROP TABLE mymind.agenda_emails; ALTER TABLE mymind.sesiones DROP COLUMN estado_confirmacion; ALTER TABLE mymind.usuarios DROP COLUMN google_calendar_token, DROP COLUMN sync_enabled, DROP COLUMN recordatorios_email, DROP COLUMN recordatorios_whatsapp, DROP COLUMN recordatorio_horas; DELETE FROM mymind.schema_migrations WHERE name='202610190001_agenda_integrations.sql'");
     const legacyDate = new Date(Date.now()+300*86400000).toISOString();
