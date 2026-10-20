@@ -1,3 +1,5 @@
+import { after } from 'next/server';
+import { processAgendaEmails } from '@/lib/agenda-email';
 import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/db';
 import { publicProfessional, assertNoOverlap } from '@/lib/booking';
@@ -33,6 +35,7 @@ export async function POST(request: Request) {
                 if (previous.disponibilidad_id !== slotId)
                     throw new InputError('Identificador de reserva ya utilizado.');
                 (await database.exec('COMMIT'));
+            after(async () => { try { await processAgendaEmails(); } catch { console.error('Agenda email processing deferred to scheduler'); } });
                 return json({ fecha_hora: previous.fecha_hora, modalidad: previous.modalidad, duracion_minutos: previous.duracion_minutos, zona_horaria: professional.zona_horaria });
             }
             const slot = (await database.prepare('SELECT * FROM disponibilidad_publica WHERE id = ? AND usuario_id = ? AND publicado = 1 AND sesion_id IS NULL AND fecha_hora > ? AND fecha_hora < ?').get(slotId, professional.id, new Date().toISOString(), new Date(Date.now() + 90 * 86400000).toISOString()));
@@ -50,6 +53,7 @@ export async function POST(request: Request) {
             (await database.prepare('UPDATE disponibilidad_publica SET sesion_id = ? WHERE id = ?').run(sessionId, slotId));
             (await database.prepare('INSERT INTO reservas_publicas (id, disponibilidad_id, sesion_id, consentimiento) VALUES (?, ?, ?, ?)').run(nonce, slotId, sessionId, 'Autorizo el registro de mis datos de contacto para gestionar esta reserva.'));
             (await database.exec('COMMIT'));
+            after(async () => { try { await processAgendaEmails(); } catch { console.error('Agenda email processing deferred to scheduler'); } });
             return json({ fecha_hora: slot.fecha_hora, modalidad: v.modalidad, duracion_minutos: slot.duracion_minutos, zona_horaria: professional.zona_horaria }, 201);
         }
         catch (e) {

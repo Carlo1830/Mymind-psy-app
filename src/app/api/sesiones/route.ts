@@ -1,3 +1,5 @@
+import { after } from 'next/server';
+import { processAgendaEmails } from '@/lib/agenda-email';
 import { assertNoOverlap } from '@/lib/booking';
 import { requireUser } from '@/lib/auth';
 import { db, patient } from '@/lib/db';
@@ -34,6 +36,7 @@ export async function POST(request: Request) {
             const created = (await database.prepare('INSERT INTO sesiones (paciente_id, fecha_hora, duracion_minutos, estado_sesion, modalidad) VALUES (?, ?, ?, ?, ?) RETURNING id').get(...values))!;
             const row = (await database.prepare(`SELECT ${appointmentColumns} FROM sesiones s JOIN pacientes p ON p.id = s.paciente_id WHERE s.id = ? AND p.usuario_id = ?`).get(created.id, user.id));
             (await database.exec('COMMIT'));
+            after(async () => { try { await processAgendaEmails(); } catch { console.error('Agenda email processing deferred to scheduler'); } });
             return json(row, 201);
         }
         catch (e) {

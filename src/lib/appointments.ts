@@ -15,4 +15,4 @@ export function appointmentInput(value: Record<string, unknown>) {
   if (!['Presencial', 'Online'].includes(String(value.modalidad))) throw new InputError('Modalidad inválida.');
   return [patient, date, duration, value.estado_sesion as string, value.modalidad as string] as const;
 }
-export const appointmentColumns = 's.id, s.paciente_id, s.fecha_hora, s.duracion_minutos, s.estado_sesion, s.modalidad, p.nombre_completo';
+export const appointmentColumns = `s.id, s.paciente_id, s.fecha_hora, s.duracion_minutos, s.estado_sesion, COALESCE(to_jsonb(s)->>'estado_confirmacion', CASE WHEN s.estado_sesion = 'Cancelada' THEN 'cancelada' ELSE 'pendiente' END) AS estado_confirmacion, s.modalidad, p.nombre_completo`;

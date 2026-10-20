@@ -1,3 +1,4 @@
+import { patientTags } from '@/lib/patient-tags';
 import { requireUser } from '@/lib/auth';
 import { db, patient, sessions } from '@/lib/db';
 import { body, failure, InputError, json, patientInput, sameOrigin } from '@/lib/api';
@@ -24,8 +25,12 @@ export async function PUT(request: Request, context: Context) {
         const user = await requireUser();
         sameOrigin(request);
         const { id } = await context.params;
-        const values = patientInput(await body(request));
-        const record = (await db().prepare('UPDATE pacientes SET nombre_completo = ?, email = ?, telefono = ?, estado = ?, motivo_consulta = ?, notas_confidenciales = ? WHERE id = ? AND usuario_id = ? RETURNING *').get(...values, id, user.id));
+        const value = await body(request);
+        const values = patientInput(value);
+        let etiquetas: string[] = [];
+        try { etiquetas = patientTags(value.etiquetas === undefined ? [] : value.etiquetas); } catch(e) { throw new InputError(e instanceof Error ? e.message : 'Etiquetas inválidas.'); }
+        const tagUpdate = value.etiquetas === undefined ? '' : ', etiquetas = ARRAY(SELECT jsonb_array_elements_text(?::jsonb))';
+        const record = await db().prepare('UPDATE pacientes SET nombre_completo = ?, email = ?, telefono = ?, estado = ?, motivo_consulta = ?, notas_confidenciales = ?' + tagUpdate + ' WHERE id = ? AND usuario_id = ? RETURNING *').get(...values, ...(value.etiquetas === undefined ? [] : [JSON.stringify(etiquetas)]), id, user.id);
         return record ? json(record) : json({ error: 'Paciente no encontrado.' }, 404);
     }
     catch (error) {

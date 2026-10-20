@@ -1,3 +1,5 @@
+import { after } from 'next/server';
+import { processAgendaEmails } from '@/lib/agenda-email';
 import { requireUser } from '@/lib/auth';
 import { db, patient } from '@/lib/db';
 import { body, failure, json, sameOrigin } from '@/lib/api';
@@ -37,6 +39,7 @@ export async function PUT(request: Request, context: Context) {
                 (await database.prepare('UPDATE disponibilidad_publica SET publicado = 0, sesion_id = NULL WHERE sesion_id = ? AND usuario_id = ?').run(id, user.id));
             const result = (await database.prepare(`SELECT ${appointmentColumns} FROM sesiones s JOIN pacientes p ON p.id = s.paciente_id WHERE s.id = ? AND p.usuario_id = ?`).get(id, user.id));
             (await database.exec('COMMIT'));
+            after(async () => { try { await processAgendaEmails(); } catch { console.error('Agenda email processing deferred to scheduler'); } });
             return json(result);
         }
         catch (e) {

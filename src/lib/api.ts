@@ -42,6 +42,11 @@ export function json(value: unknown, status = 200) {
   return NextResponse.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 }
 export function failure(error: unknown) {
+  const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+  if (['42703', '42P01', '42883'].includes(code)) {
+    console.error('Database schema mismatch', { code });
+    return json({ error: 'La base de datos requiere una actualización de esquema. Revisa las migraciones pendientes en Supabase.', code: 'SCHEMA_NOT_READY' }, 503);
+  }
   if (error instanceof HttpError) return json({ error: error.message }, error.status);
   if (error instanceof InputError) return json({ error: error.message }, 400);
   return json({ error: 'No se pudo completar la operación. Inténtalo de nuevo.' }, 500);

@@ -3,6 +3,7 @@ export type EstadoPaciente = 'Nuevo contacto' | 'En evaluación' | 'Tratamiento 
 export type EstadoSesion = 'Programada' | 'Realizada' | 'Cancelada';
 
 export interface Paciente {
+  etiquetas: string[];
   id: string;
   nombre_completo: string;
   fuente_captacion: string;
@@ -16,7 +17,9 @@ export interface Paciente {
   notas_confidenciales: string | null;
 }
 
+export type EstadoConfirmacion = 'pendiente' | 'confirmada' | 'recordatorio_enviado' | 'cancelada';
 export interface Sesion {
+  estado_confirmacion: EstadoConfirmacion;
   id: string;
   paciente_id: string;
   /** Guardar como ISO 8601 en UTC. */

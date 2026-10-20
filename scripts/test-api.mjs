@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { greetingName } from '../src/lib/greeting.ts';
 assert.equal(greetingName('  Carlo  Marrufo '), 'Carlo');
 assert.equal(greetingName('Profesional principal'), null);
@@ -12,7 +13,7 @@ const testDatabase = await testPostgres();
 const db = new Database(testDatabase.client);
 const port = 3187;
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { env: { ...process.env, DATABASE_URL: testDatabase.url, APP_ORIGIN: base }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+const server = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { env: { ...process.env, DATABASE_URL: testDatabase.url, APP_ORIGIN: base, RESEND_API_KEY: "", EMAIL_FROM: "", CRON_SECRET: "agenda-test-secret" }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 let output = '';
 let cookie = '';
 server.stdout.on('data', data => { output += data; });
@@ -43,7 +44,7 @@ try {
     }
     assert.ok(ready, output);
     for (const [path, method, payload] of [
-        ['/api/pacientes', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
+        ['/api/pacientes', 'GET'], ['/api/pacientes/etiquetas', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
         ['/api/sesiones?desde=2026-10-01T00:00:00.000Z&hasta=2026-11-01T00:00:00.000Z', 'GET'], ['/api/sesiones', 'POST', {}], ['/api/sesiones/nope', 'PUT', {}],
         ['/api/perfil', 'GET'], ['/api/perfil', 'PUT', {}], ['/api/marketing/plantillas', 'GET'], ['/api/marketing/plantillas', 'PUT', {}],
         ['/api/marketing/recursos', 'GET'], ['/api/marketing/recursos', 'POST', {}], ['/api/marketing/recursos', 'PUT', {}], ['/api/marketing/contenido', 'POST', {}],
@@ -52,6 +53,15 @@ try {
     const accountA = await request('/api/auth/register', 'POST', { nombre: 'Profesional A', email: 'profesional-a@example.test', password: 'Test-password-1234!', rol: 'administrador' }, 201);
     assert.equal(accountA.usuario.rol, 'psicologo');
     const cookieA = cookie;
+    const agendaDefaults = await request('/api/agenda/ajustes');
+    assert.equal(Boolean(agendaDefaults.recordatorios_email), false);
+    assert.equal(agendaDefaults.google_calendar_token, undefined);
+    await request('/api/agenda/ajustes','PUT',{recordatorios_email:false,recordatorios_whatsapp:true,recordatorio_horas:12});
+    assert.equal(Boolean((await request('/api/agenda/ajustes')).recordatorios_whatsapp),true);
+    await request('/api/agenda/ajustes','PUT',{recordatorios_email:true,recordatorios_whatsapp:false,recordatorio_horas:24},400);
+    await request('/api/agenda/ajustes','PUT',{recordatorios_email:false,recordatorios_whatsapp:false,recordatorio_horas:0},400);
+    await request('/api/agenda/recordatorios','GET',undefined,401);
+
     const originalProfile = await request('/api/perfil');
     await request('/api/perfil', 'PUT', { ...originalProfile, nombre: 'Carlo Marrufo' });
     assert.equal((await request('/api/dashboard')).nombre, 'Carlo Marrufo');
@@ -138,6 +148,7 @@ try {
     assert.equal((await request(range)).length, 0);
     assert.equal((await request('/api/marketing/recursos')).length, 0);
     assert.equal((await request('/api/perfil')).nombre, 'Profesional B');
+    assert.equal(Boolean((await request('/api/agenda/ajustes')).recordatorios_whatsapp),false);
     assert.equal((await request('/api/dashboard')).nombre, 'Profesional B');
     await request(route, 'GET', undefined, 404);
     await request(route, 'PUT', values, 404);
@@ -329,6 +340,73 @@ try {
     cookie = cookieA;
     for (const fixture of agendaFixtures) await db.prepare('DELETE FROM sesiones WHERE id = ?').run(fixture.id);
     console.log('Agenda diaria verificada: límites del día local, orden horario, modalidades y aislamiento entre profesionales.');
+    await db.prepare('UPDATE usuarios SET recordatorios_email=true WHERE id=?').run(accountA.usuario.id);
+    const emailSession=randomUUID();
+    await db.prepare("INSERT INTO sesiones(id,paciente_id,fecha_hora) VALUES(?,?,now()+interval '3 days')").run(emailSession,patient.id);
+    let emailJobs=await db.prepare('SELECT * FROM mymind.agenda_emails WHERE sesion_id=?').all(emailSession);
+    assert.equal(emailJobs.length,2);
+    assert.ok(emailJobs.every(j=>j.usuario_id===accountA.usuario.id));
+    await db.prepare("UPDATE sesiones SET fecha_hora=fecha_hora+interval '1 day' WHERE id=?").run(emailSession);
+    assert.equal((await db.prepare('SELECT * FROM mymind.agenda_emails WHERE sesion_id=?').all(emailSession)).length,4);
+    await db.prepare("UPDATE sesiones SET estado_sesion='Cancelada' WHERE id=?").run(emailSession);
+    assert.equal((await db.prepare('SELECT estado_confirmacion FROM sesiones WHERE id=?').get(emailSession)).estado_confirmacion,'cancelada');
+    await db.prepare('UPDATE usuarios SET recordatorios_email=false WHERE id=?').run(accountA.usuario.id);
+    await db.prepare('DELETE FROM sesiones WHERE id=?').run(emailSession);
+    console.log('Agenda integrations verified: private settings, validation, queue, rescheduling and cancellation.');
+    // Custom tags: persistence, normalization, filters, backward compatibility and tenant isolation.
+    const tagged = await request(route,'PUT',{...values,etiquetas:['Ansiedad','  ansiedad  ','Pareja']});
+    assert.deepEqual(tagged.etiquetas,['Ansiedad','Pareja']);
+    assert.deepEqual((await request(route)).paciente.etiquetas,['Ansiedad','Pareja']);
+    assert.ok((await request('/api/pacientes?etiqueta=ANSIEDAD')).some(p=>p.id===patient.id));
+    assert.ok((await request('/api/pacientes/etiquetas')).includes('Ansiedad'));
+    await request(route,'PUT',values);
+    assert.deepEqual((await request(route)).paciente.etiquetas,['Ansiedad','Pareja']);
+    cookie=cookieB;
+    assert.ok(!(await request('/api/pacientes/etiquetas')).includes('Ansiedad'));
+    assert.ok(!(await request('/api/pacientes?etiqueta=Ansiedad')).some(p=>p.id===patient.id));
+    await request(route,'PUT',{...values,etiquetas:['Privada']},404);
+    cookie=cookieA;
+    for(const etiquetas of [null,'Ansiedad',[1],[''],['x'.repeat(51)],Array.from({length:21},(_,i)=>'Etiqueta '+i)]){
+      await request(route,'PUT',{...values,etiquetas},400);
+    }
+    await request(route,'PUT',{...values,etiquetas:['Autoestima']});
+    assert.ok(!(await request('/api/pacientes?etiqueta=Ansiedad')).some(p=>p.id===patient.id));
+    await request(route,'PATCH',{status:'archived'});
+    assert.ok((await request('/api/pacientes?status=archived&etiqueta=Autoestima')).some(p=>p.id===patient.id));
+    await request(route,'PATCH',{status:'active'});
+    await request(route,'PUT',{...values,etiquetas:[]});
+    assert.deepEqual((await request(route)).paciente.etiquetas,[]);
+    const newTagged=await request('/api/pacientes','POST',{...values,nombre_completo:'Etiquetas test',etiquetas:['Alta']},201);
+    assert.deepEqual(newTagged.etiquetas,['Alta']);
+    // Existing patients and legacy read fallback, isolated database only.
+    await testDatabase.client.query("ALTER TABLE mymind.pacientes DROP COLUMN etiquetas; DELETE FROM mymind.schema_migrations WHERE name='202610190002_patient_tags.sql'");
+    assert.deepEqual((await request(route)).paciente.etiquetas,[]);
+    assert.deepEqual(await request('/api/pacientes/etiquetas'),[]);
+    assert.ok((await request('/api/pacientes')).every(p=>Array.isArray(p.etiquetas)));
+    const tagsSQL=readFileSync('docs/sql/aplicar-etiquetas-pacientes.sql','utf8');
+    await testDatabase.client.query(tagsSQL);
+    await testDatabase.client.query(tagsSQL);
+    assert.deepEqual((await request(route)).paciente.etiquetas,[]);
+    console.log('Patient tags verified: validation, filters, edits, isolation, legacy reads and migration applied twice.');
+    // Reproduce an installation with Phase 1 entirely unapplied, in this test database only.
+    await testDatabase.client.query("DROP TRIGGER agenda_email ON mymind.sesiones; DROP TRIGGER agenda_state ON mymind.sesiones; DROP FUNCTION mymind.agenda_queue_email(); DROP FUNCTION mymind.agenda_state(); DROP TABLE mymind.agenda_emails; ALTER TABLE mymind.sesiones DROP COLUMN estado_confirmacion; ALTER TABLE mymind.usuarios DROP COLUMN google_calendar_token, DROP COLUMN sync_enabled, DROP COLUMN recordatorios_email, DROP COLUMN recordatorios_whatsapp, DROP COLUMN recordatorio_horas; DELETE FROM mymind.schema_migrations WHERE name='202610190001_agenda_integrations.sql'");
+    const legacyDate = new Date(Date.now()+300*86400000).toISOString();
+    const legacyAppointment = await request('/api/sesiones','POST',{paciente_id:patient.id,fecha_hora:legacyDate,duracion_minutos:50,estado_sesion:'Programada',modalidad:'Online'},201);
+    assert.equal(legacyAppointment.estado_confirmacion,'pendiente');
+    const legacyRange='/api/sesiones?'+new URLSearchParams({desde:legacyDate,hasta:new Date(Date.parse(legacyDate)+3600000).toISOString()});
+    assert.equal((await request(legacyRange))[0].estado_confirmacion,'pendiente');
+    const cancelledLegacy = await request('/api/sesiones/'+legacyAppointment.id,'PUT',{paciente_id:patient.id,fecha_hora:legacyDate,duracion_minutos:50,estado_sesion:'Cancelada',modalidad:'Online'});
+    assert.equal(cancelledLegacy.estado_confirmacion,'cancelada');
+    const unavailableSettings = await request('/api/agenda/ajustes','GET',undefined,503);
+    assert.match(unavailableSettings.error,/202610190001/);
+    await request('/api/agenda/ajustes','PUT',{recordatorios_email:false,recordatorios_whatsapp:false,recordatorio_horas:24},503);
+    await request('/api/disponibilidad');
+    const repairSQL=readFileSync('docs/sql/aplicar-agenda-fase1.sql','utf8');
+    await testDatabase.client.query(repairSQL);
+    await testDatabase.client.query(repairSQL);
+    await request('/api/agenda/ajustes');
+    assert.equal((await request(legacyRange))[0].estado_confirmacion,'cancelada');
+    console.log('Legacy calendar verified: read, create, edit, availability, migration warning and SQL editor script applied twice.');
     console.log('Status nulo verificado: respuesta active, filtros correctos y aislamiento de propietarios.');
     console.log('Archivo verificado: filtros, restauración, privacidad entre profesionales y conservación íntegra de ficha y sesiones.');
     console.log('API verificada: creación, edición, búsqueda, filtros, privacidad del listado, validación, historial y persistencia PostgreSQL.');
