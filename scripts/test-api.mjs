@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { severity } from '../src/lib/clinical-assessments.ts';
 import { readFileSync } from 'node:fs';
 import { greetingName } from '../src/lib/greeting.ts';
 assert.equal(greetingName('  Carlo  Marrufo '), 'Carlo');
@@ -44,7 +45,7 @@ try {
     }
     assert.ok(ready, output);
     for (const [path, method, payload] of [
-        ['/api/pacientes/nope/expediente', 'PUT', {}], ['/api/pacientes', 'GET'], ['/api/pacientes/etiquetas', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
+        ['/api/pacientes/nope/expediente', 'PUT', {}], ['/api/pacientes/nope/evaluaciones', 'GET'], ['/api/pacientes/nope/evaluaciones', 'POST', {}], ['/api/pacientes', 'GET'], ['/api/pacientes/etiquetas', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
         ['/api/sesiones?desde=2026-10-01T00:00:00.000Z&hasta=2026-11-01T00:00:00.000Z', 'GET'], ['/api/sesiones', 'POST', {}], ['/api/sesiones/nope', 'PUT', {}],
         ['/api/perfil', 'GET'], ['/api/perfil', 'PUT', {}], ['/api/marketing/plantillas', 'GET'], ['/api/marketing/plantillas', 'PUT', {}],
         ['/api/marketing/recursos', 'GET'], ['/api/marketing/recursos', 'POST', {}], ['/api/marketing/recursos', 'PUT', {}], ['/api/marketing/contenido', 'POST', {}],
@@ -423,6 +424,33 @@ try {
     assert.equal(migratedClinical.notas_confidenciales,legacyClinical.notas_confidenciales);
     assert.equal(migratedClinical.motivo_consulta,legacyClinical.motivo_consulta);
     console.log('Clinical record verified: privacy, validation, concurrent edits, preserved notes and migration applied twice.');
+    for(const [score,expected] of [[0,'Mínimo'],[4,'Mínimo'],[5,'Leve'],[9,'Leve'],[10,'Moderado'],[14,'Moderado'],[15,'Moderadamente severo'],[19,'Moderadamente severo'],[20,'Severo'],[27,'Severo']])assert.equal(severity('PHQ-9',score),expected);
+    for(const [score,expected] of [[0,'Mínimo'],[4,'Mínimo'],[5,'Leve'],[9,'Leve'],[10,'Moderado'],[14,'Moderado'],[15,'Severo'],[21,'Severo']])assert.equal(severity('GAD-7',score),expected);
+    const assessmentPath=route+'/evaluaciones';
+    const phq={id:randomUUID(),tipo_test:'PHQ-9',modo:'respuestas',puntaje_total:0,respuestas:Array.from({length:9},(_,i)=>({item:i+1,valor:3})),fecha_evaluacion:'2025-01-01T12:00:00.000Z'};
+    const savedAssessment=await request(assessmentPath,'POST',phq,201);
+    assert.equal(savedAssessment.puntaje_total,27);assert.equal(savedAssessment.severidad,'Severo');assert.equal(savedAssessment.alerta_item9,true);
+    assert.equal((await request(assessmentPath,'POST',phq)).id,savedAssessment.id);
+    await request(assessmentPath,'POST',{...phq,modo:'puntaje',respuestas:[],puntaje_total:1},409);
+    const gad={id:randomUUID(),tipo_test:'GAD-7',modo:'puntaje',puntaje_total:15,respuestas:[],fecha_evaluacion:'2025-01-02T12:00:00.000Z'};
+    assert.equal((await request(assessmentPath,'POST',gad,201)).severidad,'Severo');
+    const custom=await request(assessmentPath,'POST',{...gad,id:randomUUID(),tipo_test:'Personalizado',nombre_test:'Escala local',puntaje_total:30},201);assert.equal(custom.severidad,'Sin baremo');
+    for(const invalid of [{...gad,puntaje_total:22},{...gad,puntaje_total:-1},{...gad,puntaje_total:1.2},{...gad,fecha_evaluacion:'invalid'},{...gad,fecha_evaluacion:'1'},{...gad,fecha_evaluacion:'2025-02-30T12:00:00Z'},{...gad,fecha_evaluacion:'2099-01-01T00:00:00Z'},{...phq,respuestas:phq.respuestas.slice(1)},{...phq,respuestas:phq.respuestas.map(a=>({...a,valor:4}))},{...phq,respuestas:phq.respuestas.map(a=>({...a,item:1}))},{...gad,tipo_test:'Personalizado',nombre_test:''}])await request(assessmentPath,'POST',{...invalid,id:randomUUID()},400);
+    const evaluationRows=await request(assessmentPath);
+    assert.equal(evaluationRows.length,3);
+    assert.ok(evaluationRows.every((r,i)=>i===0||r.fecha_evaluacion<=evaluationRows[i-1].fecha_evaluacion));
+    assert.equal(evaluationRows[0].usuario_id,undefined);
+    const forgedOrigin=await fetch(base+assessmentPath,{method:'POST',headers:{Cookie:cookieA,Origin:'https://evil.example','Content-Type':'application/json'},body:JSON.stringify(gad)});assert.equal(forgedOrigin.status,403);
+    cookie=cookieB;
+    await request(assessmentPath,'GET',undefined,404);await request(assessmentPath,'POST',{...gad,id:randomUUID()},404);
+    await assert.rejects(()=>testDatabase.client.query("INSERT INTO mymind.evaluaciones_clinicas(id,usuario_id,paciente_id,tipo_test,modo,puntaje_total,fecha_evaluacion) VALUES($1,$2,$3,'GAD-7','puntaje',0,now())",[randomUUID(),accountB.usuario.id,patient.id]),e=>e.code==='23503');
+    cookie=cookieA;
+    await testDatabase.client.query("DROP TABLE mymind.evaluaciones_clinicas; DELETE FROM mymind.schema_migrations WHERE name='202610260001_clinical_assessments.sql'");
+    await request(assessmentPath,'GET',undefined,503);
+    const assessmentSQL=readFileSync('docs/sql/aplicar-evaluaciones-clinicas.sql','utf8');
+    await testDatabase.client.query(assessmentSQL);await testDatabase.client.query(assessmentSQL);
+    assert.deepEqual(await request(assessmentPath),[]);
+    console.log('Clinical assessments verified: cutoffs, calculation, validation, privacy, idempotency and SQL migration.');
     // Reproduce an installation with Phase 1 entirely unapplied, in this test database only.
     await testDatabase.client.query("DROP TRIGGER agenda_email ON mymind.sesiones; DROP TRIGGER agenda_state ON mymind.sesiones; DROP FUNCTION mymind.agenda_queue_email(); DROP FUNCTION mymind.agenda_state(); DROP TABLE mymind.agenda_emails; ALTER TABLE mymind.sesiones DROP COLUMN estado_confirmacion; ALTER TABLE mymind.usuarios DROP COLUMN google_calendar_token, DROP COLUMN sync_enabled, DROP COLUMN recordatorios_email, DROP COLUMN recordatorios_whatsapp, DROP COLUMN recordatorio_horas; DELETE FROM mymind.schema_migrations WHERE name='202610190001_agenda_integrations.sql'");
     const legacyDate = new Date(Date.now()+300*86400000).toISOString();
