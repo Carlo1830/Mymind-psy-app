@@ -1,19 +1,19 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { migrationFiles, historyTables, readHistory, recordSupabase } from './migration-history.mjs';
 import { getPool, closePool, reportError } from './postgres-env.mjs';
 export async function migrate(client) {
   await client.query('BEGIN');
   try {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mymind:migrations', 0))");
-    await client.query('CREATE SCHEMA IF NOT EXISTS mymind');
-    await client.query('CREATE TABLE IF NOT EXISTS mymind.schema_migrations (name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())');
-    for (const name of readdirSync('supabase/migrations').filter(n => n.endsWith('.sql')).sort()) {
-      const sql = readFileSync(`supabase/migrations/${name}`, 'utf8');
-      const checksum = createHash('sha256').update(sql).digest('hex');
-      const previous = await client.query('SELECT checksum FROM mymind.schema_migrations WHERE name = $1', [name]);
-      if (previous.rows.length) { if (previous.rows[0].checksum !== checksum) throw Error('Applied migration changed'); continue; }
+    await historyTables(client);
+    const files = migrationFiles();
+    const {app,cli} = await readHistory(client,files);
+    for (const f of files) if (!app.has(f.name) && cli.has(f.version)) throw Error(`Reconcile history first: npm run db:reconcile -- --apply (${f.name})`);
+    for (const file of files) {
+      const {name,sql,checksum} = file;
+      if (app.has(name)) { await recordSupabase(client,file); continue; }
       await client.query(sql);
       await client.query('INSERT INTO mymind.schema_migrations (name, checksum) VALUES ($1, $2)', [name, checksum]);
+      await recordSupabase(client,file);
       console.log('Migration applied:', name);
     }
     await client.query('COMMIT');
