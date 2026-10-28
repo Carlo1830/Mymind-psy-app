@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { migrateCalendar } from '../database/migrate-calendar.mjs';
 import { migrateSaas } from '../database/migrate-saas.mjs';
 import { importSqlite } from './import-sqlite.mjs';
+import { reconcile,referenceContracts } from './reconcile-migrations.mjs';
+import { reconciliationSql } from './generate-reconciliation-sql.mjs';
 
 test('PostgreSQL schema, import, admin seed, repeated migration and private access', async () => {
  const instance = await testPostgres(55440);
@@ -45,4 +47,36 @@ test('PostgreSQL schema, import, admin seed, repeated migration and private acce
 });
 test('Parameters remain bound and quoted question marks are preserved',()=>{
  assert.equal(compileQuery("SELECT '?' AS literal FROM pacientes WHERE id = ?"),"SELECT '?' AS literal FROM mymind.pacientes WHERE id = $1");
+});
+
+test('Migration histories reconcile only after SQL and schema verification, and remain repeatable', async()=>{
+ const instance=await testPostgres(55442); const c=instance.client;
+ try {
+  const contracts=await referenceContracts();
+  await c.query("DELETE FROM mymind.schema_migrations WHERE name>'202609250001_patient_archive.sql'");
+  await assert.rejects(migrate(c),/Reconcile history first/);
+  await c.query('ALTER TABLE mymind.evaluaciones_clinicas RENAME COLUMN creado_en TO missing_creado_en');
+  await assert.rejects(reconcile(c,{apply:true,contracts}),/Schema differs/);
+  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,2);
+  await c.query('ALTER TABLE mymind.evaluaciones_clinicas RENAME COLUMN missing_creado_en TO creado_en');
+  assert.equal((await reconcile(c,{contracts})).adopted.length,5);
+  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,2);
+  await c.query("UPDATE supabase_migrations.schema_migrations SET statements=ARRAY['SELECT 1'] WHERE version='202610260001'");
+  await assert.rejects(reconcile(c,{apply:true,contracts}),/Supabase SQL differs/);
+  const {migrationFiles}=await import('./migration-history.mjs');
+  const clinical=migrationFiles().find(f=>f.version==='202610260001');
+  await c.query('UPDATE supabase_migrations.schema_migrations SET statements=$1 WHERE version=$2',[[clinical.sql],clinical.version]);
+  // Exercise the SQL Editor path as well as the Node command.
+  await c.query(await reconciliationSql());
+  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,7);
+  await migrate(c); await migrate(c);
+  assert.equal((await reconcile(c,{apply:true,contracts})).adopted.length,0);
+  const {legacyChecksums}=await import('./migration-history.mjs');
+  for(const [name,checksum] of Object.entries(legacyChecksums)) await c.query('UPDATE mymind.schema_migrations SET checksum=$2 WHERE name=$1',[name,checksum]);
+  await assert.rejects(reconcile(c,{apply:true,contracts}),/Applied migration changed/);
+  await c.query("DELETE FROM mymind.schema_migrations WHERE name='202610270001_reconcile_schema.sql'; DELETE FROM supabase_migrations.schema_migrations WHERE version='202610270001'");
+  await c.query(await reconciliationSql({repairChecksums:true,applyGuard:true}));
+  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.migration_reconciliation_audit')).rows[0].n,2);
+  await migrate(c);
+ } finally { await instance.close(); }
 });

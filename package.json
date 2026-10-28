@@ -13,6 +13,8 @@
     "api:test": "node scripts/test-api.mjs",
     "auth:setup": "node scripts/setup-owner.mjs",
     "db:migrate": "node scripts/migrate-postgres.mjs",
+    "db:reconcile": "node scripts/reconcile-migrations.mjs",
+    "db:reconcile:sql": "node scripts/generate-reconciliation-sql.mjs",
     "db:import": "node scripts/import-sqlite.mjs",
     "db:test:legacy": "node --test scripts/test-db.mjs",
     "db:check": "node scripts/check-postgres.mjs"
