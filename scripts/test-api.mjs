@@ -45,7 +45,7 @@ try {
     }
     assert.ok(ready, output);
     for (const [path, method, payload] of [
-        ['/api/pacientes/nope/expediente', 'PUT', {}], ['/api/pacientes/nope/evaluaciones', 'GET'], ['/api/pacientes/nope/evaluaciones', 'POST', {}], ['/api/pacientes', 'GET'], ['/api/pacientes/etiquetas', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
+        ['/api/pacientes/nope/atencion','GET'], ['/api/pacientes/nope/atencion','POST',{}], ['/api/pacientes/nope/expediente', 'PUT', {}], ['/api/pacientes/nope/evaluaciones', 'GET'], ['/api/pacientes/nope/evaluaciones', 'POST', {}], ['/api/pacientes', 'GET'], ['/api/pacientes/etiquetas', 'GET'], ['/api/pacientes', 'POST', {}], ['/api/pacientes/nope', 'GET'], ['/api/pacientes/nope', 'PUT', {}], ['/api/pacientes/nope/sesiones', 'POST', {}],
         ['/api/sesiones?desde=2026-10-01T00:00:00.000Z&hasta=2026-11-01T00:00:00.000Z', 'GET'], ['/api/sesiones', 'POST', {}], ['/api/sesiones/nope', 'PUT', {}],
         ['/api/perfil', 'GET'], ['/api/perfil', 'PUT', {}], ['/api/marketing/plantillas', 'GET'], ['/api/marketing/plantillas', 'PUT', {}],
         ['/api/marketing/recursos', 'GET'], ['/api/marketing/recursos', 'POST', {}], ['/api/marketing/recursos', 'PUT', {}], ['/api/marketing/contenido', 'POST', {}],
@@ -277,6 +277,61 @@ try {
     await request('/api/disponibilidad', 'PUT', { ...availabilityRule, activa: false });
     assert.equal((await request('/api/reservas/disponibilidad')).horarios.length, 0);
     console.log('Landing y reservas verificadas: horario semanal, modalidades, idempotencia, concurrencia, métricas privadas y editor.');
+
+    // New clinical-care flow uses a separate synthetic patient; no legacy notes are rewritten.
+    const carePatient=await request('/api/pacientes','POST',{nombre_completo:'Paciente atención sintético',email:'care@example.test',telefono:'',estado:'En evaluación',motivo_consulta:'Demanda conservada',notas_confidenciales:'Nota original conservada'} ,201);
+    const carePath='/api/pacientes/'+carePatient.id+'/atencion';
+    assert.equal((await request(carePath)).ficha,null);
+    await request(carePath,'POST',{accion:'ficha_guardar',version:0,datos:{fecha_nacimiento:'2020-02-30'}},400);
+    const profile=await request(carePath,'POST',{accion:'ficha_guardar',version:0,datos:{fecha_nacimiento:'1990-03-05',emergencia_nombre:'Contacto sintético',emergencia_telefono:'123'}});
+    assert.equal(profile.version,1);
+    await request(carePath,'POST',{accion:'ficha_guardar',version:0,datos:{}},409);
+    const goalId=randomUUID();
+    const goal=await request(carePath,'POST',{accion:'objetivo_guardar',id:goalId,version:0,titulo:'Objetivo acordado',criterio_logro:'Revisión conjunta',estado:'activo'});
+    assert.equal(goal.version,1);
+    await request(carePath,'POST',{accion:'objetivo_guardar',id:goalId,version:0,titulo:'Conflicto',estado:'logrado'},409);
+    const clinicalNoteId=randomUUID();
+    const clinicalDraft=await request(carePath,'POST',{accion:'nota_crear',id:clinicalNoteId,fecha_hora:'2025-01-02T15:00:00.000Z',modalidad:'Online'});
+    assert.equal(clinicalDraft.estado,'borrador');assert.equal(clinicalDraft.version,1);
+    assert.equal((await request(carePath,'POST',{accion:'nota_crear',id:clinicalNoteId})).id,clinicalDraft.id);
+    await request(carePath,'POST',{accion:'nota_finalizar',id:clinicalDraft.id,version:1},400);
+    const saved=await request(carePath,'POST',{accion:'nota_guardar',id:clinicalDraft.id,version:1,contenido:{resumen:'Sesión sintética',intervenciones:'Intervención registrada',proximos_pasos:'Revisar objetivo'}});
+    assert.equal(saved.version,2);
+    const racedSaves=await Promise.all(['A','B'].map(resumen=>fetch(base+carePath,{method:'POST',headers:{Cookie:cookieA,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({accion:'nota_guardar',id:clinicalDraft.id,version:2,contenido:{resumen}})})));
+    assert.deepEqual(racedSaves.map(r=>r.status).sort(),[200,409]);
+    const beforeFinal=(await request(carePath+'?nota='+clinicalDraft.id)).nota;
+    const finalized=await request(carePath,'POST',{accion:'nota_finalizar',id:clinicalDraft.id,version:beforeFinal.version});
+    assert.equal(finalized.estado,'finalizada');assert.ok(finalized.finalizada_en);
+    await request(carePath,'POST',{accion:'nota_guardar',id:clinicalDraft.id,version:finalized.version,contenido:{resumen:'Reescritura'}},409);
+    await assert.rejects(testDatabase.client.query("UPDATE mymind.notas_clinicas SET contenido='{}' WHERE id=$1",[clinicalDraft.id]),{code:'23514'});
+    await assert.rejects(testDatabase.client.query('UPDATE mymind.nota_revisiones SET version=99 WHERE nota_id=$1',[clinicalDraft.id]),{code:'23514'});
+    const addendumId=randomUUID();
+    await request(carePath,'POST',{accion:'adenda_crear',id:clinicalDraft.id,adenda_id:addendumId,texto:'Aclaración sintética'});
+    await request(carePath,'POST',{accion:'adenda_crear',id:clinicalDraft.id,adenda_id:addendumId,texto:'Aclaración sintética'});
+    const noteHistory=await request(carePath+'?nota='+clinicalDraft.id);
+    assert.equal(noteHistory.revisiones.length,4);assert.equal(noteHistory.adendas.length,1);
+    assert.equal(noteHistory.nota.contenido.resumen,beforeFinal.contenido.resumen);
+    const clinicalSession=(await request('/api/pacientes/'+carePatient.id)).sesiones.find(s=>s.id===clinicalDraft.sesion_id);
+    assert.equal(clinicalSession.estado_sesion,'Realizada');
+    await request('/api/sesiones/'+clinicalSession.id,'PUT',{...clinicalSession,fecha_hora:'2025-01-03T15:00:00.000Z'},409);
+    const state=await request(carePath);assert.equal(state.notas.length,1);assert.equal(state.objetivos.length,1);assert.ok(state.eventos.some(e=>e.accion==='nota_finalizada'));
+    const legacyPreserved=(await request('/api/pacientes/'+carePatient.id)).paciente;assert.equal(legacyPreserved.notas_confidenciales,'Nota original conservada');
+    const futureSessionId=randomUUID();
+    await testDatabase.client.query("INSERT INTO mymind.sesiones(id,paciente_id,fecha_hora,estado_sesion) VALUES($1,$2,'2099-01-01T12:00:00Z','Programada')",[futureSessionId,carePatient.id]);
+    const futureNote=await request(carePath,'POST',{accion:'nota_crear',id:randomUUID(),sesion_id:futureSessionId});
+    const futureSaved=await request(carePath,'POST',{accion:'nota_guardar',id:futureNote.id,version:1,contenido:{resumen:'Borrador de prueba'}});
+    await request(carePath,'POST',{accion:'nota_finalizar',id:futureNote.id,version:futureSaved.version},400);
+    await assert.rejects(testDatabase.client.query("UPDATE mymind.notas_clinicas SET estado='finalizada' WHERE id=$1",[futureNote.id]),{code:'23514'});
+    await testDatabase.client.query("UPDATE mymind.sesiones SET estado_sesion='Cancelada',fecha_hora='2025-02-01T12:00:00Z' WHERE id=$1",[futureSessionId]);
+    await request(carePath,'POST',{accion:'nota_finalizar',id:futureNote.id,version:futureSaved.version},400);
+    await assert.rejects(testDatabase.client.query('DELETE FROM mymind.nota_adendas WHERE id=$1',[addendumId]),{code:'23514'});
+    await assert.rejects(testDatabase.client.query('DELETE FROM mymind.atencion_eventos WHERE paciente_id=$1',[carePatient.id]),{code:'23514'});
+    cookie=cookieB;
+    await request(carePath,'GET',undefined,404);await request(carePath+'?nota='+clinicalDraft.id,'GET',undefined,404);
+    await request(carePath,'POST',{accion:'nota_guardar',id:clinicalDraft.id,version:finalized.version,contenido:{}},404);
+    cookie=cookieA;
+    const careCsrf=await fetch(base+carePath,{method:'POST',headers:{Cookie:cookieA,Origin:'https://evil.example','Content-Type':'application/json'},body:JSON.stringify({accion:'nota_finalizar',id:clinicalDraft.id,version:1})});assert.equal(careCsrf.status,403);
+    console.log('Atención clínica verificada: ficha, objetivos, concurrencia, borrador/finalización, historial inmutable, adendas, aislamiento y sesión protegida.');
 
     // Archiving is owner-scoped and preserves clinical records and sessions.
     cookie = cookieA;
