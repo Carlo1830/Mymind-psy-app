@@ -23,7 +23,7 @@ export async function PUT(request: Request, context: Context) {
         const database = db();
         (await database.begin(user.id));
         try {
-            const existing = (await database.prepare('SELECT s.paciente_id, s.fecha_hora FROM sesiones s JOIN pacientes p ON p.id = s.paciente_id WHERE s.id = ? AND p.usuario_id = ?').get(id, user.id));
+            const existing = (await database.prepare('SELECT s.* FROM sesiones s JOIN pacientes p ON p.id = s.paciente_id WHERE s.id = ? AND p.usuario_id = ?').get(id, user.id));
             if (!existing) {
                 (await database.exec('ROLLBACK'));
                 return json({ error: 'Cita no encontrada.' }, 404);
@@ -31,6 +31,13 @@ export async function PUT(request: Request, context: Context) {
             if (existing.paciente_id !== values[0]) {
                 (await database.exec('ROLLBACK'));
                 return json({ error: 'No se puede trasladar una sesión clínica a otro paciente.' }, 400);
+            }
+            const careSchema=await database.prepare("SELECT to_regclass('mymind.notas_clinicas')::text AS name").get();
+            if(careSchema?.name && await database.prepare("SELECT id FROM mymind.notas_clinicas WHERE sesion_id=? AND estado='finalizada'").get(id)) {
+                if(existing.fecha_hora!==values[1]||existing.duracion_minutos!==values[2]||existing.estado_sesion!==values[3]||existing.modalidad!==values[4]) {
+                    await database.exec('ROLLBACK');
+                    return json({error:'Esta sesión tiene una nota finalizada. Sus datos se conservan; registra una nueva cita si corresponde.'},409);
+                }
             }
             if (values[3] !== 'Cancelada')
                 (await assertNoOverlap(user.id, values[1], values[2], id, database));

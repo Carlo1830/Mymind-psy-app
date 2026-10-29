@@ -1,16 +1,18 @@
 "use client";
-import { useState } from 'react';
+import { useEffect,useState } from 'react';
 import type { Paciente } from '@/types/database';
 export type ClinicalFields=Pick<Paciente,'motivo_consulta'|'antecedentes'|'hipotesis_diagnostica'|'expediente_version'>;
-export function ClinicalRecord({patient,onSaved}:{patient:Paciente;onSaved:(value:ClinicalFields)=>void}){
+export function ClinicalRecord({patient,onSaved,onDirtyChange}:{patient:Paciente;onSaved:(value:ClinicalFields)=>void;onDirtyChange?:(value:boolean)=>void}){
  const [draft,setDraft]=useState({motivo_consulta:patient.motivo_consulta||'',antecedentes:patient.antecedentes||'',hipotesis_diagnostica:patient.hipotesis_diagnostica||''});
+ const [saved,setSaved]=useState(draft);
+ useEffect(()=>{onDirtyChange?.(JSON.stringify(draft)!==JSON.stringify(saved));return()=>onDirtyChange?.(false);},[draft,saved,onDirtyChange]);
  const [version,setVersion]=useState(patient.expediente_version);
  const [saving,setSaving]=useState(false);const [message,setMessage]=useState('');const [error,setError]=useState('');
  const sections=[{key:'motivo_consulta',title:'Motivo de consulta',hint:'Demanda inicial y expectativas del paciente.',max:10000},{key:'antecedentes',title:'Antecedentes',hint:'Historia personal, médica, familiar y tratamientos previos.',max:20000},{key:'hipotesis_diagnostica',title:'Hipótesis diagnóstica / Formulación clínica',hint:'Apreciación profesional, formulación del caso y objetivos terapéuticos.',max:20000}] as const;
  async function save(event:React.FormEvent){event.preventDefault();if(saving)return;setSaving(true);setError('');setMessage('');
   try{const response=await fetch('/api/pacientes/'+encodeURIComponent(patient.id)+'/expediente',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...draft,expediente_version:version})});
    const value=await response.json();if(!response.ok)throw Error(value.error||'No se pudo actualizar el expediente.');
-   setVersion(value.expediente_version);setDraft({motivo_consulta:value.motivo_consulta||'',antecedentes:value.antecedentes||'',hipotesis_diagnostica:value.hipotesis_diagnostica||''});onSaved(value);setMessage('Expediente actualizado.');
+   setVersion(value.expediente_version);setDraft({motivo_consulta:value.motivo_consulta||'',antecedentes:value.antecedentes||'',hipotesis_diagnostica:value.hipotesis_diagnostica||''});setSaved({motivo_consulta:value.motivo_consulta||'',antecedentes:value.antecedentes||'',hipotesis_diagnostica:value.hipotesis_diagnostica||''});onSaved(value);setMessage('Expediente actualizado.');
   }catch(e){setError(e instanceof Error?e.message:'No se pudo guardar.');}finally{setSaving(false);}
  }
  return <section aria-labelledby="clinical-record-title" className="my-8"><h3 id="clinical-record-title" className="font-serif text-2xl text-teal-900">Expediente clínico</h3><p className="mt-2 text-sm text-slate-500">Abre cada apartado para consultar o editar. Guarda los cambios antes de cerrar la ficha.</p><form onSubmit={save} className="mt-5"><fieldset disabled={saving} className="space-y-3">{sections.map(section=><details key={section.key} open className="rounded-2xl border border-teal-100 bg-stone-50/60 p-4"><summary className="cursor-pointer text-sm font-semibold text-teal-900">{section.title}</summary><label className="mt-3 block text-xs leading-relaxed text-slate-500">{section.hint}<textarea aria-label={section.title} rows={5} maxLength={section.max} className="field mt-2 bg-white text-sm font-normal" value={draft[section.key]} onChange={e=>{setDraft({...draft,[section.key]:e.target.value});setMessage('');}}/></label>{section.key==='antecedentes'&&patient.notas_confidenciales&&<details className="mt-3 text-xs text-slate-500"><summary className="cursor-pointer">Notas libres originales conservadas</summary><p className="mt-2 whitespace-pre-wrap break-words leading-relaxed">{patient.notas_confidenciales}</p></details>}</details>)}<button type="submit" className="action mt-2">{saving?'Guardando…':'Actualizar expediente'}</button></fieldset>{error&&<p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}{message&&<p role="status" className="mt-3 text-sm text-teal-800">{message}</p>}</form></section>;
