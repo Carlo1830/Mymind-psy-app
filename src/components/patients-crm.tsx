@@ -1,5 +1,6 @@
 "use client";
 
+import { ClinicalCare } from '@/components/clinical-care';
 import { ClinicalAssessments } from '@/components/clinical-assessments';
 import { ClinicalRecord } from '@/components/clinical-record';
 import { PatientTagBadges, PatientTagsEditor } from '@/components/patient-tags';
@@ -14,7 +15,6 @@ const input = 'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2
 const primary = 'rounded-xl bg-teal-800 px-4 py-2.5 shadow-sm text-sm font-medium text-white hover:bg-teal-900 disabled:opacity-50';
 const secondary = 'rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50';
 const dateLabel = (value: string) => new Date(value).toLocaleString('es-CL', { dateStyle: 'medium', timeStyle: 'short' });
-function localNow() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: 'no-store', ...options });
   const data = await response.json();
@@ -61,8 +61,18 @@ function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPa
   useEffect(() => { if (createNew) dialog.current?.showModal(); }, [createNew]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
-  const [noteError, setNoteError] = useState('');
-  const [noteSaving, setNoteSaving] = useState(false);
+  const [careDirty,setCareDirty]=useState(false);
+  const [recordDirty,setRecordDirty]=useState(false);
+  const unsaved=careDirty||recordDirty;
+  const mayLeave=useCallback(()=>!unsaved||window.confirm('Hay cambios clínicos sin guardar. ¿Descartarlos y continuar?'),[unsaved]);
+  function selectPatient(id:string|null){if(id===selected)return;if(mayLeave()){setSelected(id);if(!id)setDetail(null);}}
+  useEffect(()=>{
+    if(!unsaved)return;
+    const before=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};
+    const click=(e:MouseEvent)=>{const link=e.target instanceof Element?e.target.closest('a[href]'):null;if(link&&!window.confirm('Hay cambios clínicos sin guardar. ¿Salir de la ficha?')){e.preventDefault();e.stopPropagation();}};
+    window.addEventListener('beforeunload',before);document.addEventListener('click',click,true);
+    return()=>{window.removeEventListener('beforeunload',before);document.removeEventListener('click',click,true);};
+  },[unsaved]);
 
 
 
@@ -93,7 +103,7 @@ function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPa
     if (!selected) return;
     const controller = new AbortController();
     async function load() {
-      setDetailLoading(true); setDetailError(''); setDetail(null); setNoteError('');
+      setDetailLoading(true); setDetailError(''); setDetail(null);
       try { setDetail(await api<Detail>(`/api/pacientes/${selected}`, { signal: controller.signal })); }
       catch (e) { if (!controller.signal.aborted) setDetailError(e instanceof Error ? e.message : 'Error al cargar la ficha.'); }
       finally { if (!controller.signal.aborted) setDetailLoading(false); }
@@ -103,8 +113,9 @@ function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPa
   }, [selected, detailVersion]);
 
   const openForm = useCallback((record: Paciente | null) => {
+    if(!mayLeave())return;
     setEditing(record); setTags(record?.etiquetas || []); setFormError(''); setFormOpen(true); dialog.current?.showModal();
-  }, []);
+  }, [mayLeave]);
 
   async function savePatient(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -119,7 +130,7 @@ function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPa
   }
 
   async function changeStatus(record: Summary) {
-    if (archiving) return;
+    if (archiving || !mayLeave()) return;
     const next: StatusPaciente = record.status === 'archived' ? 'active' : 'archived';
     setArchiving(record.id); setArchiveError(''); setNotice('');
     try {
@@ -137,21 +148,6 @@ function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPa
     return <button type="button" className={secondary} disabled={archiving !== null} onClick={() => void changeStatus(record)} aria-label={label + ' a ' + record.nombre_completo}>{archiving === record.id ? 'Guardando…' : label}</button>;
   }
 
-  async function saveNote(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selected || noteSaving) return;
-    const form = event.currentTarget;
-    const values = Object.fromEntries(new FormData(form));
-    setNoteSaving(true); setNoteError('');
-    try {
-      const date = new Date(String(values.fecha_hora));
-      if (!Number.isFinite(date.getTime())) throw new Error('Indica una fecha y hora válida.');
-      await api(`/api/pacientes/${selected}/sesiones`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...values, fecha_hora: date.toISOString() }) });
-      form.reset(); setDetailVersion(v => v + 1); setNotice('Nota de evolución guardada.');
-    } catch (e) { setNoteError(e instanceof Error ? e.message : 'No se pudo guardar la nota.'); }
-    finally { setNoteSaving(false); }
-  }
-
   return <>
     <div className="mb-6 flex flex-wrap items-center justify-between gap-4"><p className="text-sm text-slate-500">Gestiona tus contactos y el seguimiento clínico.</p><button className={primary} onClick={() => openForm(null)}>Nuevo paciente</button></div>
     {notice && <p role="status" className="mb-4 rounded-lg bg-teal-50 p-3 text-sm text-teal-800">{notice}</p>}
@@ -163,18 +159,18 @@ function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPa
       {tagError && <p role="alert" className="mb-4 text-sm text-red-700">{tagError} <button type="button" className={secondary} onClick={()=>setVersion(v=>v+1)}>Reintentar etiquetas</button></p>}
       {loading ? <p role="status" className="py-10 text-center text-slate-500">Cargando pacientes…</p> : error ? <div role="alert" className="py-6 text-red-700">{error} <button className={secondary} onClick={() => setVersion(v => v + 1)}>Reintentar</button></div> : <>
         <p className="mb-4 text-xs text-slate-500">{patients.length} pacientes encontrados</p>
-        {patients.length === 0 ? <div className="py-10 text-center"><h2 className="font-semibold">No hay pacientes para mostrar</h2><p className="mt-2 text-sm text-slate-500">Crea un paciente o ajusta la búsqueda y el estado.</p></div> : view === 'table' ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Pacientes registrados</caption><thead className="border-b border-slate-200 text-slate-500"><tr>{['Nombre', 'Contacto', 'Estado clínico', 'Acciones'].map(h => <th key={h} scope="col" className="px-3 py-3 font-medium">{h}</th>)}</tr></thead><tbody>{patients.map(p => <tr key={p.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50"><td className="px-3 py-4"><button className="text-left font-semibold text-teal-800 hover:underline" onClick={() => setSelected(p.id)}>{p.nombre_completo}</button><PatientTagBadges tags={p.etiquetas} /></td><td className="px-3 py-4"><p>{p.email || 'Sin correo'}</p><p className="mt-1 text-xs text-slate-500">{p.telefono || 'Sin teléfono'}</p></td><td className="px-3 py-4"><Badge state={p.estado} /></td><td className="px-3 py-4"><button className={secondary} onClick={() => setSelected(p.id)} aria-label={`Ver ficha de ${p.nombre_completo}`}>Ver ficha</button><div className="mt-2">{archiveButton(p)}</div></td></tr>)}</tbody></table></div> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{patients.map(p => <article key={p.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm text-left hover:border-teal-500 hover:bg-teal-50/30"><Badge state={p.estado} /><h2 className="mt-4 font-semibold">{p.nombre_completo}</h2><PatientTagBadges tags={p.etiquetas} /><p className="mt-2 break-all text-sm text-slate-500">{p.email || 'Sin correo'}</p><p className="mt-1 text-sm text-slate-500">{p.telefono || 'Sin teléfono'}</p><div className="mt-4 flex flex-wrap gap-2"><button className={secondary} onClick={() => setSelected(p.id)} aria-label={`Ver ficha de ${p.nombre_completo}`}>Abrir ficha</button>{archiveButton(p)}</div></article>)}</div>}
+        {patients.length === 0 ? <div className="py-10 text-center"><h2 className="font-semibold">No hay pacientes para mostrar</h2><p className="mt-2 text-sm text-slate-500">Crea un paciente o ajusta la búsqueda y el estado.</p></div> : view === 'table' ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Pacientes registrados</caption><thead className="border-b border-slate-200 text-slate-500"><tr>{['Nombre', 'Contacto', 'Estado clínico', 'Acciones'].map(h => <th key={h} scope="col" className="px-3 py-3 font-medium">{h}</th>)}</tr></thead><tbody>{patients.map(p => <tr key={p.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50"><td className="px-3 py-4"><button className="text-left font-semibold text-teal-800 hover:underline" onClick={() => selectPatient(p.id)}>{p.nombre_completo}</button><PatientTagBadges tags={p.etiquetas} /></td><td className="px-3 py-4"><p>{p.email || 'Sin correo'}</p><p className="mt-1 text-xs text-slate-500">{p.telefono || 'Sin teléfono'}</p></td><td className="px-3 py-4"><Badge state={p.estado} /></td><td className="px-3 py-4"><button className={secondary} onClick={() => selectPatient(p.id)} aria-label={`Ver ficha de ${p.nombre_completo}`}>Ver ficha</button><div className="mt-2">{archiveButton(p)}</div></td></tr>)}</tbody></table></div> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{patients.map(p => <article key={p.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm text-left hover:border-teal-500 hover:bg-teal-50/30"><Badge state={p.estado} /><h2 className="mt-4 font-semibold">{p.nombre_completo}</h2><PatientTagBadges tags={p.etiquetas} /><p className="mt-2 break-all text-sm text-slate-500">{p.email || 'Sin correo'}</p><p className="mt-1 text-sm text-slate-500">{p.telefono || 'Sin teléfono'}</p><div className="mt-4 flex flex-wrap gap-2"><button className={secondary} onClick={() => selectPatient(p.id)} aria-label={`Ver ficha de ${p.nombre_completo}`}>Abrir ficha</button>{archiveButton(p)}</div></article>)}</div>}
       </>}
     </section>
 
-    {selected && <section id="ficha-paciente" aria-label="Ficha del paciente" className="mt-6 rounded-3xl border border-slate-200 bg-white shadow-sm p-6"><div className="mb-5 flex items-center justify-between gap-4"><h2 className="text-xl font-semibold">Ficha del paciente</h2><button disabled={noteSaving} className={secondary} onClick={() => { setSelected(null); setDetail(null); }}>Cerrar ficha</button></div>
+    {selected && <section id="ficha-paciente" aria-label="Ficha del paciente" className="mt-6 rounded-3xl border border-slate-200 bg-white shadow-sm p-6"><div className="mb-5 flex items-center justify-between gap-4"><h2 className="text-xl font-semibold">Ficha del paciente</h2><button className={secondary} onClick={() => selectPatient(null)}>Cerrar ficha</button></div>
       {detailLoading ? <p role="status">Cargando ficha…</p> : detailError ? <div role="alert">{detailError} <button className={secondary} onClick={() => setDetailVersion(v => v + 1)}>Reintentar</button></div> : detail && <>
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-2xl font-semibold">{detail.paciente.nombre_completo}</h3><PatientTagBadges tags={detail.paciente.etiquetas} /><div className="mt-2"><Badge state={detail.paciente.estado} />{detail.paciente.status === 'archived' && <span className="ml-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">Archivado</span>}</div></div><div className="flex flex-wrap gap-2"><button className={secondary} onClick={() => openForm(detail.paciente)}>Editar paciente</button>{archiveButton(detail.paciente)}</div></div>
         <dl className="my-6 grid gap-5 text-sm sm:grid-cols-2">{[['Correo electrónico', detail.paciente.email], ['Teléfono', detail.paciente.telefono], ['Fecha de registro', dateLabel(detail.paciente.fecha_registro)], ['Fuente de captación', detail.paciente.fuente_captacion]].map(([label, value]) => <div key={label}><dt className="font-medium text-slate-500">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-words">{value || 'Sin registrar'}</dd></div>)}</dl>
-        <ClinicalRecord key={detail.paciente.id} patient={detail.paciente} onSaved={value=>setDetail(current=>current?{...current,paciente:{...current.paciente,...value}}:current)} />
+        <ClinicalRecord key={detail.paciente.id} patient={detail.paciente} onDirtyChange={setRecordDirty} onSaved={value=>setDetail(current=>current?{...current,paciente:{...current.paciente,...value}}:current)} />
+        <ClinicalCare key={detail.paciente.id} patientId={detail.paciente.id} sessions={detail.sesiones} linkedSession={linkedSession} onDirtyChange={setCareDirty} onSessionsChanged={()=>{const id=detail.paciente.id;void api<Detail>('/api/pacientes/'+id).then(next=>setDetail(current=>current?.paciente.id===id?next:current)).catch(()=>setNotice('La nota se guardó. Vuelve a abrir la ficha para actualizar las sesiones.'));}} />
         <ClinicalAssessments key={detail.paciente.id} patientId={detail.paciente.id} />
-        <div className="grid gap-8 xl:grid-cols-2"><div><h3 className="mb-4 text-lg font-semibold">Notas de evolución</h3><p className="mb-4 text-xs text-slate-500">Historial de citas y sesiones, de la más reciente a la más antigua.</p>{detail.sesiones.length === 0 ? <p className="text-sm text-slate-500">Aún no hay sesiones registradas.</p> : <ol className="space-y-4">{detail.sesiones.map(s => <li key={s.id} className="rounded-xl border border-slate-200 p-4"><div className="flex flex-wrap justify-between gap-2"><time dateTime={s.fecha_hora} className="text-sm font-semibold">{dateLabel(s.fecha_hora)}</time><span className="text-xs text-slate-500">{s.estado_sesion}</span></div><p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6">{s.notas_evolucion || 'Sin notas de evolución.'}</p></li>)}</ol>}</div>
-        <form id="nota-evolucion" key={`${detail.paciente.id}-${linkedSession || "new"}`} onSubmit={saveNote} className="rounded-xl bg-slate-50 p-5"><h3 className="text-lg font-semibold">Añadir nota de evolución</h3><p className="mt-2 text-xs leading-5 text-slate-500">Elige una sesión existente o registra una sesión realizada. Las notas nuevas se añaden al historial sin reemplazar las anteriores.</p><fieldset disabled={noteSaving} className="mt-4 space-y-4"><label className="block text-sm font-medium">Sesión<select name="sesion_id" className={input} defaultValue={detail.sesiones.some(s => s.id === linkedSession) ? linkedSession! : ""}><option value="">Nueva sesión realizada</option>{detail.sesiones.map(s => <option value={s.id} key={s.id}>{dateLabel(s.fecha_hora)} · {s.estado_sesion}</option>)}</select></label><label className="block text-sm font-medium">Fecha y hora de la nota / nueva sesión<input type="datetime-local" name="fecha_hora" required defaultValue={localNow()} className={input} /><span className="mt-1 block text-xs font-normal text-slate-500">Hora local de este dispositivo.</span></label><label className="block text-sm font-medium">Nota de evolución<textarea name="notas_evolucion" required maxLength={20000} rows={5} className={input} /></label>{noteError && <p role="alert" className="text-sm text-red-700">{noteError}</p>}<button className={primary} type="submit">{noteSaving ? 'Guardando…' : 'Guardar nota'}</button></fieldset></form></div>
+        <details className="my-6 rounded-2xl border border-slate-200 p-5"><summary className="cursor-pointer font-semibold text-slate-700">Historial previo de evolución conservado</summary><p className="mt-2 text-xs text-slate-500">Las notas anteriores se conservan tal como fueron registradas. Las nuevas notas se escriben en Registro de sesión.</p><ol className="mt-4 space-y-3">{detail.sesiones.filter(s=>s.notas_evolucion).map(s=><li key={s.id} className="rounded-xl bg-stone-50 p-4"><time className="text-sm font-medium" dateTime={s.fecha_hora}>{dateLabel(s.fecha_hora)}</time><p className="mt-2 whitespace-pre-wrap text-sm">{s.notas_evolucion}</p></li>)}</ol>{!detail.sesiones.some(s=>s.notas_evolucion)&&<p className="mt-3 text-sm text-slate-500">No hay notas previas.</p>}</details>
       </>}
     </section>}
 
