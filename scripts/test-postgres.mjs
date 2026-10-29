@@ -59,7 +59,7 @@ test('Migration histories reconcile only after SQL and schema verification, and 
   await assert.rejects(reconcile(c,{apply:true,contracts}),/Schema differs/);
   assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,2);
   await c.query('ALTER TABLE mymind.evaluaciones_clinicas RENAME COLUMN missing_creado_en TO creado_en');
-  assert.equal((await reconcile(c,{contracts})).adopted.length,5);
+  assert.equal((await reconcile(c,{contracts})).adopted.length,6);
   assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,2);
   await c.query("UPDATE supabase_migrations.schema_migrations SET statements=ARRAY['SELECT 1'] WHERE version='202610260001'");
   await assert.rejects(reconcile(c,{apply:true,contracts}),/Supabase SQL differs/);
@@ -68,7 +68,7 @@ test('Migration histories reconcile only after SQL and schema verification, and 
   await c.query('UPDATE supabase_migrations.schema_migrations SET statements=$1 WHERE version=$2',[[clinical.sql],clinical.version]);
   // Exercise the SQL Editor path as well as the Node command.
   await c.query(await reconciliationSql());
-  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,7);
+  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,8);
   await migrate(c); await migrate(c);
   assert.equal((await reconcile(c,{apply:true,contracts})).adopted.length,0);
   const {legacyChecksums}=await import('./migration-history.mjs');
@@ -79,4 +79,28 @@ test('Migration histories reconcile only after SQL and schema verification, and 
   assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.migration_reconciliation_audit')).rows[0].n,2);
   await migrate(c);
  } finally { await instance.close(); }
+});
+
+test('Clinical care SQL Editor delivery is atomic, repeatable and checks both ledgers',async()=>{
+ const { PGlite }=await import('@electric-sql/pglite');
+ const { migrationFiles,historyTables,recordSupabase }=await import('./migration-history.mjs');
+ const { pendingMigrationSql }=await import('./generate-migration-sql.mjs');
+ const engine=await PGlite.create();
+ const c={query:(sql,args)=>engine.query(sql,args)};
+ try {
+  await historyTables(c);
+  for(const f of migrationFiles().slice(0,-1)){
+   await engine.exec(f.sql);
+   await c.query('INSERT INTO mymind.schema_migrations(name,checksum) VALUES($1,$2)',[f.name,f.checksum]);
+   await recordSupabase(c,f);
+  }
+  const sql=pendingMigrationSql();
+  await engine.exec(sql.replaceAll('\n','\r\n'));
+  await engine.exec(sql);
+  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,migrationFiles().length);
+  assert.equal((await c.query("SELECT relrowsecurity FROM pg_class WHERE oid='mymind.notas_clinicas'::regclass")).rows[0].relrowsecurity,true);
+  await c.query("UPDATE supabase_migrations.schema_migrations SET statements=ARRAY['SELECT 1'] WHERE version='202610280001'");
+  await assert.rejects(engine.exec(sql),/Migration history mismatch/);
+  await engine.exec('ROLLBACK');
+ }finally{await engine.close();}
 });
