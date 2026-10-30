@@ -1,3 +1,4 @@
+import { confirmationToken } from '../src/lib/confirmation-token.ts';
 import assert from 'node:assert/strict';
 import { severity } from '../src/lib/clinical-assessments.ts';
 import { readFileSync } from 'node:fs';
@@ -7,14 +8,14 @@ assert.equal(greetingName('Profesional principal'), null);
 assert.equal(greetingName('  '), null);
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, createHash, createHmac } from 'node:crypto';
 import { Database } from '../database/postgres.mjs';
 import { testPostgres } from './test-postgres-helper.mjs';
 const testDatabase = await testPostgres();
 const db = new Database(testDatabase.client);
 const port = 3187;
 const base = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { env: { ...process.env, DATABASE_URL: testDatabase.url, APP_ORIGIN: base, RESEND_API_KEY: "", EMAIL_FROM: "", CRON_SECRET: "agenda-test-secret" }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+const server = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port), '-H', '127.0.0.1'], { env: { ...process.env, DATABASE_URL: testDatabase.url, APP_ORIGIN: base, RESEND_API_KEY: "", EMAIL_FROM: "", CRON_SECRET: "agenda-test-secret", AGENDA_CONFIRMATION_SECRET: "synthetic-confirmation-key", RESEND_WEBHOOK_SECRET: "whsec_c3ludGhldGljLXdlYmhvb2sta2V5" }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 let output = '';
 let cookie = '';
 server.stdout.on('data', data => { output += data; });
@@ -507,6 +508,43 @@ try {
     assert.deepEqual(await request(assessmentPath),[]);
     console.log('Clinical assessments verified: cutoffs, calculation, validation, privacy, idempotency and SQL migration.');
     // Reproduce an installation with Phase 1 entirely unapplied, in this test database only.
+    // Coordination: atomic recurrence, individual confirmation, series cancellation and owner isolation.
+    const recurrence={paciente_id:patient.id,fecha_hora:'2090-01-02T13:00:00.000Z',duracion_minutos:50,estado_sesion:'Programada',modalidad:'Online',repeticiones:3,intervalo_semanas:1,zona_horaria:'America/Santiago'};
+    const series=await request('/api/sesiones','POST',recurrence,201);
+    const seriesRows=await testDatabase.client.query('SELECT * FROM mymind.sesiones WHERE serie_id=$1 ORDER BY fecha_hora',[series.serie_id]);
+    assert.equal(seriesRows.rows.length,3);
+    // A collision on the second occurrence rolls the first insertion back.
+    await request('/api/sesiones','POST',{...recurrence,fecha_hora:'2089-12-26T13:00:00.000Z'},409);
+    assert.equal((await testDatabase.client.query("SELECT count(*)::int AS n FROM mymind.sesiones WHERE fecha_hora='2089-12-26T13:00:00.000Z'")).rows[0].n,0);
+    await request('/api/sesiones','POST',{...recurrence,repeticiones:1,fecha_hora:'2091-01-01T12:00:00.000Z',estado_sesion:'Ausente'},400);
+    const attested=await request('/api/sesiones/'+series.id,'PUT',{...series,confirmacion:'confirmada'});
+    assert.equal(attested.estado_confirmacion,'confirmada');assert.equal(attested.confirmacion_fuente,'profesional');
+    const rescheduled=await request('/api/sesiones/'+series.id,'PUT',{...series,fecha_hora:'2090-01-03T13:00:00.000Z'});
+    assert.equal(rescheduled.estado_confirmacion,'pendiente');
+    process.env.AGENDA_CONFIRMATION_SECRET='synthetic-confirmation-key';
+    const token=confirmationToken(rescheduled.id,rescheduled.fecha_hora,rescheduled.modalidad,rescheduled.duracion_minutos,rescheduled.confirmacion_version);
+    await request('/api/agenda/confirmar','POST',{id:rescheduled.id,token:'bad'},400);
+    await request('/api/agenda/confirmar','POST',{id:rescheduled.id,token});
+    await request('/api/agenda/confirmar','POST',{id:rescheduled.id,token});
+    assert.equal((await testDatabase.client.query('SELECT confirmacion_fuente FROM mymind.sesiones WHERE id=$1',[series.id])).rows[0].confirmacion_fuente,'paciente');
+    await request('/api/sesiones/'+series.id,'PUT',{...rescheduled,estado_sesion:'Cancelada',alcance:'futuras'});
+    assert.equal((await testDatabase.client.query("SELECT count(*)::int AS n FROM mymind.sesiones WHERE serie_id=$1 AND estado_sesion='Cancelada'",[series.serie_id])).rows[0].n,3);
+    await request('/api/agenda/confirmar','POST',{id:rescheduled.id,token},400);
+    const pastAbsent=await request('/api/sesiones','POST',{...recurrence,repeticiones:1,fecha_hora:'2020-01-01T12:00:00.000Z',estado_sesion:'Ausente'},201);
+    assert.equal(pastAbsent.estado_sesion,'Ausente');
+    // Provider events must be signed; acceptance alone is not delivery.
+    await testDatabase.client.query("INSERT INTO mymind.agenda_emails(sesion_id,usuario_id,fecha_cita,tipo,destinatario,modalidad,zona_horaria,enviar_en,estado,proveedor_id,entrega) VALUES($1,$2,$3,'confirmacion','synthetic@example.test','Online','America/Santiago',now(),'enviado','synthetic-delivery','aceptado') ON CONFLICT(sesion_id,fecha_cita,tipo) DO UPDATE SET estado='enviado',proveedor_id='synthetic-delivery',entrega='aceptado'",[series.id,accountA.usuario.id,rescheduled.fecha_hora]);
+    const eventTime=new Date().toISOString();const rawEvent=JSON.stringify({type:'email.delivered',created_at:eventTime,data:{email_id:'synthetic-delivery'}});
+    const timestamp=String(Math.floor(Date.now()/1000));const signature=createHmac('sha256',Buffer.from('synthetic-webhook-key')).update(`event.${timestamp}.${rawEvent}`).digest('base64');
+    const webhookHeaders={'Content-Type':'application/json','svix-id':'event','svix-timestamp':timestamp,'svix-signature':'v1,'+signature};
+    assert.equal((await fetch(base+'/api/agenda/webhook',{method:'POST',headers:webhookHeaders,body:rawEvent+' '})).status,401);
+    assert.equal((await fetch(base+'/api/agenda/webhook',{method:'POST',headers:webhookHeaders,body:rawEvent})).status,200);
+    assert.equal((await testDatabase.client.query("SELECT entrega FROM mymind.agenda_emails WHERE proveedor_id='synthetic-delivery'")).rows[0].entrega,'entregado');
+    assert.ok((await request('/api/agenda/entregas')).some(j=>j.entrega==='entregado'));
+    cookie=cookieB;assert.equal((await request('/api/agenda/entregas')).length,0);
+    await request('/api/sesiones/'+series.id,'PUT',{...rescheduled,estado_sesion:'Programada'},404);
+    cookie=cookieA;
+    console.log('Coordinación verificada: recurrencia atómica, conflicto revertido, DST unitario, ausencia, confirmación individual e invalidación, cancelación de serie.');
     await testDatabase.client.query("DROP TRIGGER agenda_email ON mymind.sesiones; DROP TRIGGER agenda_state ON mymind.sesiones; DROP FUNCTION mymind.agenda_queue_email(); DROP FUNCTION mymind.agenda_state(); DROP TABLE mymind.agenda_emails; ALTER TABLE mymind.sesiones DROP COLUMN estado_confirmacion; ALTER TABLE mymind.usuarios DROP COLUMN google_calendar_token, DROP COLUMN sync_enabled, DROP COLUMN recordatorios_email, DROP COLUMN recordatorios_whatsapp, DROP COLUMN recordatorio_horas; DELETE FROM mymind.schema_migrations WHERE name='202610190001_agenda_integrations.sql'");
     const legacyDate = new Date(Date.now()+300*86400000).toISOString();
     const legacyAppointment = await request('/api/sesiones','POST',{paciente_id:patient.id,fecha_hora:legacyDate,duracion_minutos:50,estado_sesion:'Programada',modalidad:'Online'},201);
