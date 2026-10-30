@@ -1,0 +1,7 @@
+'use client';
+import { useState } from 'react';
+type Delivery={id:string;nombre_completo:string;tipo:string;estado:string;entrega:string;intentos:number;ultimo_error:string|null};
+export function AgendaDeliveries(){const [rows,setRows]=useState<Delivery[]>([]);const [message,setMessage]=useState('');const [busy,setBusy]=useState(false);
+ async function load(){setBusy(true);try{const r=await fetch('/api/agenda/entregas',{cache:'no-store'});const v=await r.json();if(!r.ok)throw Error(v.error);setRows(v);setMessage(v.length?'':'No hay correos registrados.');}catch(e){setMessage(e instanceof Error?e.message:'No se pudieron cargar los correos.');}finally{setBusy(false);}}
+ return <section className="panel mt-8" aria-label="Seguimiento de correos"><h2 className="font-serif text-2xl">Confirmaciones y recordatorios por correo</h2><p className="my-3 text-sm text-slate-500">Aceptado indica recepción por el proveedor. Entregado requiere su comprobante; no significa que el paciente haya leído o confirmado. Los fallos se reintentan hasta cuatro veces.</p><button className="secondary" disabled={busy} onClick={load}>{busy?'Consultando…':'Consultar entregas'}</button>{message&&<p role="status" className="mt-3">{message}</p>}<ul className="mt-4 space-y-3">{rows.map(row=><li key={row.id} className="rounded-lg border p-3 text-sm">{row.nombre_completo} · {row.tipo} · {row.estado==='enviado'?row.entrega:row.estado} · {row.intentos} intento(s){row.ultimo_error&&<span className="block text-amber-800">{row.ultimo_error}</span>}</li>)}</ul></section>;
+}

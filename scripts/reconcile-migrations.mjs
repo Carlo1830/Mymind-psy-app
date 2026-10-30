@@ -39,7 +39,7 @@ export async function referenceContracts(files=migrationFiles()) {
       await db.exec(file.sql);
       await db.exec('SET LOCAL search_path=pg_catalog;');
       const current=new Map((await db.query(catalogSql)).rows.map(r=>[r.key,r.value]));
-      contracts.set(file.name,[...current].filter(([key,value])=>previous.get(key)!==value));
+      contracts.set(file.name,[...current].filter(([key,value])=>previous.get(key)!==value).concat([...previous.keys()].filter(key=>!current.has(key)).map(key=>[key,null])));
       previous=current; await db.exec('COMMIT;');
     }
     return contracts;
@@ -61,7 +61,7 @@ export async function reconcile(client,{apply=false,repairChecksums=false,files=
     const latest=new Map();
     for (const f of files) if(app.has(f.name)||cli.has(f.version)) for(const pair of contracts.get(f.name)) latest.set(...pair);
     for(const f of [...adopting,...repairing]) for(const [key] of contracts.get(f.name)) {
-      if(actual.get(key)!==latest.get(key)) throw Error(`Schema differs for ${f.name}: ${key.split(':').slice(0,2).join(':')}`);
+      if((actual.get(key)??null)!==latest.get(key)) throw Error(`Schema differs for ${f.name}: ${key.split(':').slice(0,2).join(':')}`);
     }
     const policies=await client.query("SELECT tablename FROM pg_policies WHERE schemaname='mymind' AND tablename IN ('agenda_emails','evaluaciones_clinicas')");
     if(policies.rows.length) throw Error('Unexpected public-access policy on a private application table');

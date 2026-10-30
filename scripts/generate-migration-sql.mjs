@@ -40,6 +40,7 @@ SELECT name,checksum FROM mymind.schema_migrations ORDER BY name;
 `;
 }
 if(process.argv[1]?.endsWith('generate-migration-sql.mjs')) {
- writeFileSync('docs/sql/apply-clinical-care.sql',pendingMigrationSql());
- console.log('Generated docs/sql/apply-clinical-care.sql');
+ const output=process.argv[2] || 'docs/sql/apply-appointment-coordination.sql';
+ writeFileSync(output,pendingMigrationSql());
+ console.log('Generated',output);
 }

@@ -1,7 +1,7 @@
 {
   "name": "mymind-psy-app",
   "version": "0.1.0",
-  "description": "Gestión de consulta psicológica",
+  "description": "Gesti\u00f3n de consulta psicol\u00f3gica",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -17,7 +17,8 @@
     "db:reconcile:sql": "node scripts/generate-reconciliation-sql.mjs",
     "db:import": "node scripts/import-sqlite.mjs",
     "db:test:legacy": "node --test scripts/test-db.mjs",
-    "db:check": "node scripts/check-postgres.mjs"
+    "db:check": "node scripts/check-postgres.mjs",
+    "agenda:test": "node --test scripts/test-coordination.mjs"
   },
   "keywords": [],
   "author": "",
