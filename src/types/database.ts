@@ -1,6 +1,6 @@
 export type StatusPaciente = 'active' | 'archived';
 export type EstadoPaciente = 'Nuevo contacto' | 'En evaluación' | 'Tratamiento activo' | 'Inactivo';
-export type EstadoSesion = 'Programada' | 'Realizada' | 'Cancelada';
+export type EstadoSesion = 'Programada' | 'Realizada' | 'Cancelada' | 'Ausente';
 
 export interface Paciente {
   etiquetas: string[];
@@ -23,6 +23,9 @@ export interface Paciente {
 export type EstadoConfirmacion = 'pendiente' | 'confirmada' | 'recordatorio_enviado' | 'cancelada';
 export interface Sesion {
   estado_confirmacion: EstadoConfirmacion;
+  serie_id: string | null;
+  confirmada_en: string | null;
+  confirmacion_fuente: string | null;
   id: string;
   paciente_id: string;
   /** Guardar como ISO 8601 en UTC. */
