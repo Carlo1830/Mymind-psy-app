@@ -11,6 +11,7 @@
     "db:init": "node scripts/migrate-postgres.mjs",
     "db:test": "node --test scripts/test-postgres.mjs",
     "api:test": "node scripts/test-api.mjs",
+    "evaluaciones:preview": "node scripts/preview-assessments.mjs",
     "auth:setup": "node scripts/setup-owner.mjs",
     "db:migrate": "node scripts/migrate-postgres.mjs",
     "db:reconcile": "node scripts/reconcile-migrations.mjs",

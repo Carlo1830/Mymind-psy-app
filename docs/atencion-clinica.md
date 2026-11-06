@@ -1,5 +1,9 @@
 # Atención clínica
 
+## Notas pendientes en el inicio
+
+La entrega local descrita en [Desarrollo para el uso diario](desarrollo-operacion.md) añade el total de borradores y acceso directo a las cinco sesiones pendientes más antiguas desde «Mi consulta». Abrir una ficha con `paciente` y `sesion` en el enlace carga la nota de esa sesión cuando ya existe, en vez de requerir buscarla en el listado. La lista excluye notas finalizadas y no muestra su texto clínico. Esta ampliación aún no se publicó.
+
 En `/pacientes`, abrir la ficha. El expediente previo conserva motivo de consulta, antecedentes, hipótesis y notas confidenciales. Atención clínica añade identificación opcional, contacto de apoyo y representante cuando corresponda; objetivos terapéuticos con criterio de logro, estado y fecha de revisión; y una nota estructurada por sesión.
 
 ## Uso profesional

@@ -151,3 +151,7 @@ Fuentes de configuración: [clientes SSR de Supabase](https://supabase.com/docs/
 El listado de `/pacientes` muestra activos por defecto y permite alternar con archivados. `status` (`active` o `archived`) es independiente del estado clínico. Archivar y restaurar conservan contacto, notas y sesiones; archivar no cancela citas. Las acciones están disponibles en tabla, tarjetas y ficha.
 
 `GET /api/pacientes?status=active|archived` combina archivo, búsqueda y estado clínico. `PATCH /api/pacientes/:id` recibe `{ "status": "archived" }` o `{ "status": "active" }`, valida sesión y propietario y modifica únicamente ese campo. Ejecutar `npm run db:migrate` para registrar la migración compatible con la columna añadida manualmente en Supabase.
+
+## Inventario adicional de producción
+
+La revisión de interfaz del 05-11-2026 registra funciones adicionales de atención clínica y seguimiento de correos. Véase [Funciones adicionales observadas en producción](docs/funciones-observadas-produccion.md), con evidencia visible, límites de verificación y pendientes de desarrollo.

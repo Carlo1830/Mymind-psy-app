@@ -24,3 +24,7 @@ Vaciar un campo lo guarda como NULL sin restaurar automáticamente las notas ori
 
 ## Pruebas
 Validación de campos, aislamiento entre profesionales, conflicto de edición, preservación de notas originales/sesiones, fallback sin migración y script del editor ejecutado dos veces en PostgreSQL aislado.
+
+## Ampliación observada en producción
+
+La revisión del 05-11-2026 documenta identificación y contactos de apoyo, objetivos terapéuticos, borradores de sesión, finalización, adendas, trazabilidad e historial previo. Consultar [el inventario de funciones observadas](funciones-observadas-produccion.md) para distinguir controles visibles de comportamiento pendiente de prueba.

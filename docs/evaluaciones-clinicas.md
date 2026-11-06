@@ -33,3 +33,28 @@ Incluye descripción accesible del gráfico y tabla de datos.
 
 ## Verificaciones
 Pruebas de límites, cálculo servidor, validación de ítems/fecha, CSRF, aislamiento, FK de propietario, reintentos, orden y script SQL aplicado dos veces en base aislada.
+
+### Verificación del 05-11-2026
+
+La copia local se sincronizó con `origin/main` hasta `cebf229`. La consulta administrativa `npm run db:check` terminó correctamente: los nueve archivos de migración coinciden con ambos historiales de Supabase, las columnas consultadas de evaluaciones existen y las tablas verificadas tienen RLS activado. No se aplicó DDL ni se modificaron datos de producción. La indicación anterior «No se ha aplicado en producción» corresponde a la entrega original; esta comprobación posterior confirma el registro de la migración en ambos historiales.
+
+Se comprobó el recorrido desde el navegador en una base temporal PGlite, usando una compilación local y un paciente sintético:
+
+- PHQ-9 por puntaje directo: 12 el 01-11-2026 y 6 el 04-11-2026. Se guardaron ambos registros y el gráfico mostró los puntos en orden cronológico; la tabla mostró los más recientes primero.
+- GAD-7 por ítems: siete respuestas de valor 2. Se guardó un total de 14 y se recuperó el detalle de las siete respuestas.
+- El selector del gráfico mostró GAD-7 y PHQ-9 como series separadas. Al seleccionar PHQ-9, solo se mostraron los puntajes 12 y 6.
+- Tras recargar la página y abrir nuevamente la ficha, los tres registros continuaban disponibles en la base temporal.
+
+Pasaron `npm run lint`, `npm run typecheck`, las cuatro pruebas de `npm run db:test` y `npm run api:test`. La compilación local pasó con `npm run build -- --webpack`; el motor predeterminado Turbopack falló al iniciar su proceso de estilos en este entorno y no se considera validado.
+
+Esta prueba de formulario no se ejecutó contra producción. No comprueba rendimiento ni entrega de correos.
+
+### Repetir la comprobación manual sin datos reales
+
+1. Compilar con `npm run build` o, si se reproduce el fallo local de Turbopack, `npm run build -- --webpack`.
+2. Ejecutar `npm run evaluaciones:preview`.
+3. Abrir `http://127.0.0.1:3190/acceso` e iniciar sesión con la cuenta sintética que imprime el comando. El paciente de prueba ya está creado.
+4. Registrar evaluaciones desde la ficha, comprobar historial y gráfico y recargar la página para verificar recuperación.
+5. Detener el comando con Ctrl+C. La base vive en memoria y se descarta al cerrar el proceso; la información no se conserva entre ejecuciones.
+
+El comando usa una base temporal local, desactiva las credenciales de correo y escucha únicamente en `127.0.0.1`. No utiliza la conexión de producción para el servidor de prueba. Requiere libres los puertos 3190 y 55449.

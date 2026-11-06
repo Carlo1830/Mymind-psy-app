@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { greetingName } from '@/lib/greeting';
+import { PendingClinicalNotes } from '@/components/pending-clinical-notes';
 
 type Agenda = {
   nombre: string;
@@ -60,6 +61,7 @@ export function DailyAgenda({ name }: { name: string }) {
           </li>)}
         </ol>}
     </section>
+    <PendingClinicalNotes />
     <nav aria-label="Accesos rápidos" className="mt-10 flex flex-wrap gap-x-8 gap-y-4 border-t border-slate-200/70 pt-5 text-sm text-teal-800">
       <Link href="/calendario?nueva=1" className="inline-flex items-center gap-2 rounded-md py-1 hover:underline underline-offset-4"><span aria-hidden="true">+</span>Nueva Cita</Link>
       <Link href="/pacientes?nuevo=1" className="inline-flex items-center gap-2 rounded-md py-1 hover:underline underline-offset-4"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-4"><circle cx="12" cy="8" r="3" /><path d="M5 21v-2a7 7 0 0 1 14 0v2" /></svg>Nuevo Paciente</Link>

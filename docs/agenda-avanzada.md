@@ -23,3 +23,7 @@ No se activaron envíos ni cron en producción. Los cambios de anticipación apl
 ## Referencias
 - https://resend.com/docs/dashboard/emails/idempotency-keys
 - https://developers.google.com/identity/protocols/oauth2/web-server
+
+## Actualización de la revisión de interfaz
+
+El 05-11-2026 se observó una sección de seguimiento de correos con consulta de entregas y un texto que anuncia hasta cuatro intentos ante fallos. Esto amplía la interfaz descrita en esta primera entrega; su implementación y operación aún no se verificaron. Consultar [el inventario de funciones observadas](funciones-observadas-produccion.md).
