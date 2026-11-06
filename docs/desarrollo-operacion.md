@@ -1,12 +1,12 @@
 # Desarrollo para el uso diario de la consulta
 
-## Entrega local: notas de sesión pendientes
+## Entrega publicada: notas de sesión pendientes
 
 Se añadió a «Mi consulta» una lista de borradores guardados, con su total y hasta cinco sesiones ordenadas de la más antigua a la más reciente. «Retomar nota» abre la ficha y la nota correspondiente; el panel recibe el foco cuando termina de cargar.
 
 La lista no incluye textos de la nota, contactos ni objetivos. `GET /api/atencion/pendientes` exige sesión y filtra por profesional. Las notas de pacientes archivados siguen visibles con una indicación de archivo. Las citas canceladas se identifican; su nota sigue sujeta a las restricciones de finalización existentes. Las notas finalizadas no aparecen como pendientes.
 
-No requiere migraciones. No se cambió el contenido de las notas existentes ni se desplegó esta entrega a producción.
+No requiere migraciones. No se cambió el contenido de las notas existentes. La mejora se envió a `origin/main` en el commit `21b85e8` y se comprobó en el dashboard de producción el 05-11-2026: la sección carga y muestra «No tienes borradores de sesión pendientes» para la cuenta consultada. No se crearon notas de prueba en producción.
 
 ## Validación
 
@@ -15,7 +15,7 @@ No requiere migraciones. No se cambió el contenido de las notas existentes ni s
 - `npm run api:test`: acceso sin sesión rechazado, separación entre dos profesionales, campos de respuesta sin contenido clínico, lista vacía, borradores, exclusión de finalizadas, orden, límite de cinco, total de siete y pacientes archivados. Incluye las pruebas existentes de conservación, versiones, finalización y adendas.
 - Navegador sobre una base temporal: crear y guardar un borrador, encontrarlo en el inicio, abrirlo desde «Retomar nota», finalizarlo, añadir una adenda, recargar y comprobar conservación. Al regresar al inicio, la lista vuelve al estado vacío.
 
-Las pruebas usan datos sintéticos mediante `npm run evaluaciones:preview`. No acreditan una validación del despliegue de esta entrega ni de su rendimiento en producción.
+Las pruebas del recorrido completo usan datos sintéticos mediante `npm run evaluaciones:preview`. La comprobación posterior en producción confirma la carga de la sección y su estado vacío; no verifica allí el recorrido con borradores ni el rendimiento bajo carga.
 
 ## Prioridades propuestas después de esta entrega
 
