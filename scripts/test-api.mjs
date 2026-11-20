@@ -247,22 +247,24 @@ try {
         assert.equal(s.modalidad, 'Ambas');
         assert.equal(s.duracion_minutos, 50);
     }
-    const booking = { nombre_completo: 'Reserva pública', email: 'reserva@example.test', telefono: '', horario_id: chosenSlot.id, modalidad: 'Online', consentimiento: true, solicitud_id: randomUUID() };
+    const booking = { nombre_completo: 'Reserva pública', email: 'reserva@example.test', telefono: '', horario_id: chosenSlot.id, modalidad: 'Online', consentimiento: true, solicitud_id: randomUUID(),seguimiento:'a'.repeat(64) };
     await request('/api/reservas', 'POST', { ...booking, consentimiento: false }, 400);
     const confirmation = await request('/api/reservas', 'POST', booking, 201);
     assert.equal(confirmation.fecha_hora, chosenSlot.fecha_hora);
     assert.equal(confirmation.modalidad, 'Online');
-    await request('/api/reservas', 'POST', booking);
+    assert.equal(confirmation.estado,'pendiente');
+    await request('/api/reservas', 'POST', booking,201);
     await request('/api/reservas', 'POST', { ...booking, solicitud_id: randomUUID() }, 409);
     assert.ok(!(await request('/api/reservas/disponibilidad')).horarios.some(s => s.id === chosenSlot.id));
     const raceSlot = publicSlots.horarios[1];
-    const raced = await Promise.all([1, 2].map(i => fetch(base + '/api/reservas', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ ...booking, horario_id: raceSlot.id, email: `race-${i}@example.test`, solicitud_id: randomUUID() }) })));
+    const raced = await Promise.all([1, 2].map(i => fetch(base + '/api/reservas', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ ...booking, horario_id: raceSlot.id, email: `race-${i}@example.test`, solicitud_id: randomUUID(),seguimiento:String(i).repeat(64) }) })));
     assert.deepEqual(raced.map(r => r.status).sort(), [201, 409]);
     cookie = cookieB;
     assert.equal((await request('/api/dashboard')).pacientes_activos, 0);
     assert.equal((await request('/api/disponibilidad')).horarios.length, 0);
     await request('/api/disponibilidad', 'DELETE', { id: chosenSlot.id }, 404);
     cookie = cookieA;
+    await request('/api/solicitudes','POST',{id:confirmation.id,accion:'aceptar'});
     const dashboard = await request('/api/dashboard');
     assert.equal(dashboard.pacientes_activos, 1);
     assert.equal(dashboard.leads_mes, 3);
@@ -279,6 +281,77 @@ try {
     await request('/api/disponibilidad', 'PUT', { ...availabilityRule, activa: false });
     assert.equal((await request('/api/reservas/disponibilidad')).horarios.length, 0);
     console.log('Landing y reservas verificadas: horario semanal, modalidades, idempotencia, concurrencia, métricas privadas y editor.');
+
+    // Patient invitations use their own credentials, never the professional cookie.
+    async function patientRequest(token,path='/api/mi-agenda',method='GET',value,status=200){
+      const response=await fetch(base+path,{method,headers:{Origin:base,'Content-Type':'application/json','x-patient-token':token},body:value===undefined?undefined:JSON.stringify(value)});
+      assert.equal(response.status,status,await response.clone().text());return response.json();
+    }
+    await patientRequest('','/api/mi-agenda','GET',undefined,401);
+    const accessPath=`/api/pacientes/${fromWeb.id}/acceso`;
+    const invitation=await request(accessPath,'POST',{});
+    assert.equal(invitation.token.length,64);
+    assert.ok(new Date(invitation.vence_en)>new Date());
+    const ownPortal=await patientRequest(invitation.token);
+    assert.equal(ownPortal.solicitudes.length,1);
+    assert.equal(ownPortal.solicitudes[0].estado,'aceptada');
+    assert.equal(ownPortal.solicitudes[0].cita.estado,'Programada');
+    for(const secret of ['notas_confidenciales','notas_evolucion','seguimiento_hash','contenido_hash','usuario_id']) assert.ok(!JSON.stringify(ownPortal).includes(secret));
+    cookie=cookieB;
+    await request(accessPath,'POST',{},404);
+    await request('/api/solicitudes','POST',{id:confirmation.id,accion:'rechazar'},404);
+    assert.equal((await request('/api/solicitudes')).solicitudes.length,0);
+    cookie=cookieA;
+    const slots=[];
+    for(let i=0;i<6;i++){
+      const id=randomUUID();const date=new Date(Date.now()+(45+i)*86400000).toISOString();
+      await db.prepare('INSERT INTO disponibilidad_publica(id,usuario_id,fecha_hora,duracion_minutos,modalidad) VALUES(?,?,?,50,\'Online\')').run(id,accountA.usuario.id,date);
+      slots.push({id,date});
+    }
+    const requestPayload=slot=>({horario_id:slot.id,modalidad:'Online',consentimiento:true,solicitud_id:randomUUID(),seguimiento:randomUUID().replaceAll('-','')+randomUUID().replaceAll('-','')});
+    const payload=requestPayload(slots[0]);
+    const held=await patientRequest(invitation.token,'/api/mi-agenda','POST',payload,201);
+    assert.equal(new Date(held.vence_en)-new Date(held.creado_en),6*3600000);
+    assert.ok(!(await patientRequest(invitation.token)).horarios.some(s=>s.id===slots[0].id));
+    await patientRequest(invitation.token,'/api/mi-agenda','POST',payload,201);
+    await patientRequest(invitation.token,'/api/mi-agenda','POST',requestPayload(slots[0]),409);
+    await request('/api/sesiones','POST',{...appointment,paciente_id:fromWeb.id,fecha_hora:slots[0].date},409);
+    await request('/api/solicitudes','PUT',{anticipacion_horas:5,respuesta_horas:6},400);
+    await request('/api/solicitudes','PUT',{anticipacion_horas:48,respuesta_horas:7});
+    assert.equal((await patientRequest(invitation.token)).solicitudes.find(r=>r.id===held.id).vence_en,held.vence_en);
+    const accepted=await request('/api/solicitudes','POST',{id:held.id,accion:'aceptar',mensaje:'Respuesta sintética'});
+    await request('/api/solicitudes','POST',{id:held.id,accion:'aceptar'});
+    assert.equal((await db.prepare('SELECT count(*) AS n FROM sesiones WHERE id=?').get(accepted.sesion_id)).n,1);
+    await db.prepare("UPDATE sesiones SET estado_sesion='Cancelada' WHERE id=?").run(accepted.sesion_id);
+    assert.equal((await patientRequest(invitation.token)).solicitudes.find(r=>r.id===held.id).cita.estado,'Cancelada');
+    const rejected=await patientRequest(invitation.token,'/api/mi-agenda','POST',requestPayload(slots[1]),201);
+    await request('/api/solicitudes','POST',{id:rejected.id,accion:'rechazar'});
+    assert.ok((await patientRequest(invitation.token)).horarios.some(s=>s.id===slots[1].id));
+    const alternative=await patientRequest(invitation.token,'/api/mi-agenda','POST',requestPayload(slots[1]),201);
+    await request('/api/solicitudes','POST',{id:alternative.id,accion:'alternativa',horario_id:slots[2].id});
+    const proposed=(await patientRequest(invitation.token)).solicitudes.find(r=>r.id===alternative.id);
+    assert.equal(proposed.alternativa_horario_id,slots[2].id);
+    assert.equal(proposed.cita,null);
+    const expired=await patientRequest(invitation.token,'/api/mi-agenda','POST',requestPayload(slots[3]),201);
+    await db.prepare("UPDATE mymind.solicitudes_cita SET creado_en=now()-interval '8 hours',vence_en=now()-interval '1 second' WHERE id=?").run(expired.id);
+    // This invokes the same database function as the unattended scheduler.
+    await db.prepare('SELECT mymind.vencer_solicitudes()').get();
+    assert.equal((await patientRequest(invitation.token)).solicitudes.find(r=>r.id===expired.id).estado,'vencida');
+    await request('/api/solicitudes','POST',{id:expired.id,accion:'aceptar'},409);
+    assert.ok((await patientRequest(invitation.token)).horarios.some(s=>s.id===slots[3].id));
+    const queued=await db.prepare('SELECT tipo FROM mymind.avisos_solicitudes WHERE solicitud_id=? ORDER BY tipo').all(expired.id);
+    assert.deepEqual(queued.map(r=>r.tipo),['nueva','vencida']);
+    await request('/api/solicitudes','PUT',{anticipacion_horas:24,respuesta_horas:6});
+    const nearId=randomUUID();
+    await db.prepare("INSERT INTO disponibilidad_publica(id,usuario_id,fecha_hora,duracion_minutos,modalidad) VALUES(?,?,now()+interval '23 hours',50,'Online')").run(nearId,accountA.usuario.id);
+    await patientRequest(invitation.token,'/api/mi-agenda','POST',requestPayload({id:nearId}),409);
+    const renewed=await request(accessPath,'POST',{});
+    await patientRequest(invitation.token,'/api/mi-agenda','GET',undefined,401);
+    await patientRequest(renewed.token);
+    await request(accessPath,'DELETE');
+    await patientRequest(renewed.token,'/api/mi-agenda','GET',undefined,401);
+    await db.prepare('DELETE FROM disponibilidad_publica WHERE id=?').run(nearId);
+    console.log('Solicitudes verificadas: acceso privado y revocación, aislamiento, retención concurrente, 24/6 horas, confirmación idempotente, rechazo, alternativa, vencimiento y cola de avisos.');
 
     // New clinical-care flow uses a separate synthetic patient; no legacy notes are rewritten.
     const carePatient=await request('/api/pacientes','POST',{nombre_completo:'Paciente atención sintético',email:'care@example.test',telefono:'',estado:'En evaluación',motivo_consulta:'Demanda conservada',notas_confidenciales:'Nota original conservada'} ,201);

@@ -12,6 +12,7 @@ import { migrateSaas } from '../database/migrate-saas.mjs';
 import { importSqlite } from './import-sqlite.mjs';
 import { reconcile,referenceContracts } from './reconcile-migrations.mjs';
 import { reconciliationSql } from './generate-reconciliation-sql.mjs';
+import { migrationFiles as allMigrations } from './migration-history.mjs';
 
 test('PostgreSQL schema, import, admin seed, repeated migration and private access', async () => {
  const instance = await testPostgres(55440);
@@ -60,7 +61,7 @@ test('Migration histories reconcile only after SQL and schema verification, and 
   await assert.rejects(reconcile(c,{apply:true,contracts}),/Schema differs/);
   assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,2);
   await c.query('ALTER TABLE mymind.evaluaciones_clinicas RENAME COLUMN missing_creado_en TO creado_en');
-  assert.equal((await reconcile(c,{contracts})).adopted.length,7);
+  assert.equal((await reconcile(c,{contracts})).adopted.length,allMigrations().length-2);
   assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,2);
   await c.query("UPDATE supabase_migrations.schema_migrations SET statements=ARRAY['SELECT 1'] WHERE version='202610260001'");
   await assert.rejects(reconcile(c,{apply:true,contracts}),/Supabase SQL differs/);
@@ -69,7 +70,7 @@ test('Migration histories reconcile only after SQL and schema verification, and 
   await c.query('UPDATE supabase_migrations.schema_migrations SET statements=$1 WHERE version=$2',[[clinical.sql],clinical.version]);
   // Exercise the SQL Editor path as well as the Node command.
   await c.query(await reconciliationSql());
-  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,9);
+  assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,allMigrations().length);
   await migrate(c); await migrate(c);
   assert.equal((await reconcile(c,{apply:true,contracts})).adopted.length,0);
   const {legacyChecksums}=await import('./migration-history.mjs');
@@ -100,7 +101,7 @@ test('Clinical care SQL Editor delivery is atomic, repeatable and checks both le
   await engine.exec(sql);
   assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.schema_migrations')).rows[0].n,migrationFiles().length);
   assert.equal((await c.query("SELECT relrowsecurity FROM pg_class WHERE oid='mymind.notas_clinicas'::regclass")).rows[0].relrowsecurity,true);
-  await c.query("UPDATE supabase_migrations.schema_migrations SET statements=ARRAY['SELECT 1'] WHERE version='202610300001'");
+  await c.query("UPDATE supabase_migrations.schema_migrations SET statements=ARRAY['SELECT 1'] WHERE version=$1",[migrationFiles().at(-1).version]);
   await assert.rejects(engine.exec(sql),/Migration history mismatch/);
   await engine.exec('ROLLBACK');
  }finally{await engine.close();}

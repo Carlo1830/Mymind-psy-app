@@ -1,6 +1,7 @@
 "use client";
 
 import { ClinicalCare } from '@/components/clinical-care';
+import { PatientBookingAccess } from '@/components/patient-booking-access';
 import { ClinicalAssessments } from '@/components/clinical-assessments';
 import { ClinicalRecord } from '@/components/clinical-record';
 import { PatientTagBadges, PatientTagsEditor } from '@/components/patient-tags';
@@ -167,6 +168,7 @@ function PatientsContent({ linkedPatient, linkedSession, createNew }: { linkedPa
       {detailLoading ? <p role="status">Cargando ficha…</p> : detailError ? <div role="alert">{detailError} <button className={secondary} onClick={() => setDetailVersion(v => v + 1)}>Reintentar</button></div> : detail && <>
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-2xl font-semibold">{detail.paciente.nombre_completo}</h3><PatientTagBadges tags={detail.paciente.etiquetas} /><div className="mt-2"><Badge state={detail.paciente.estado} />{detail.paciente.status === 'archived' && <span className="ml-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">Archivado</span>}</div></div><div className="flex flex-wrap gap-2"><button className={secondary} onClick={() => openForm(detail.paciente)}>Editar paciente</button>{archiveButton(detail.paciente)}</div></div>
         <dl className="my-6 grid gap-5 text-sm sm:grid-cols-2">{[['Correo electrónico', detail.paciente.email], ['Teléfono', detail.paciente.telefono], ['Fecha de registro', dateLabel(detail.paciente.fecha_registro)], ['Fuente de captación', detail.paciente.fuente_captacion]].map(([label, value]) => <div key={label}><dt className="font-medium text-slate-500">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-words">{value || 'Sin registrar'}</dd></div>)}</dl>
+        {detail.paciente.status!=='archived'&&<PatientBookingAccess key={detail.paciente.id} patientId={detail.paciente.id}/>}
         <ClinicalRecord key={detail.paciente.id} patient={detail.paciente} onDirtyChange={setRecordDirty} onSaved={value=>setDetail(current=>current?{...current,paciente:{...current.paciente,...value}}:current)} />
         <ClinicalCare key={detail.paciente.id} patientId={detail.paciente.id} sessions={detail.sesiones} linkedSession={linkedSession} onDirtyChange={setCareDirty} onSessionsChanged={()=>{const id=detail.paciente.id;void api<Detail>('/api/pacientes/'+id).then(next=>setDetail(current=>current?.paciente.id===id?next:current)).catch(()=>setNotice('La nota se guardó. Vuelve a abrir la ficha para actualizar las sesiones.'));}} />
         <ClinicalAssessments key={detail.paciente.id} patientId={detail.paciente.id} />
