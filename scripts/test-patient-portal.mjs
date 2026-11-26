@@ -1,0 +1,106 @@
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {randomUUID,createHash} from 'node:crypto';
+import {testPostgres} from './test-postgres-helper.mjs';
+const instance=await testPostgres(55446);const c=instance.client;const base='http://127.0.0.1:3188';
+const server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','-p','3188','-H','127.0.0.1'],{env:{...process.env,DATABASE_URL:instance.url,APP_ORIGIN:base,RESEND_API_KEY:'',EMAIL_FROM:'',ALLOW_REGISTRATION:'true'},stdio:['ignore','pipe','pipe'],windowsHide:true});
+let output='';server.stdout.on('data',d=>output+=d);server.stderr.on('data',d=>output+=d);
+function client(){return {cookie:''};}const pro=client();const otherPro=client();const adult=client();const otherAdult=client();const anonymous=client();
+async function api(who,path,method='GET',value,status=200,extra={}){
+ const response=await fetch(base+path,{method,headers:{Origin:base,'Content-Type':'application/json',Cookie:who.cookie,...extra},body:value===undefined?undefined:JSON.stringify(value)});
+ assert.equal(response.status,status,`${method} ${path}: ${await response.clone().text()}`);
+ const set=response.headers.get('set-cookie');if(set)who.cookie=set.split(';')[0];
+ assert.equal(response.headers.get('cache-control'),'no-store');return response.json();
+}
+const password='Synthetic-patient-password-123!';const changed='Synthetic-changed-password-456!';
+try{
+ let ready=false;for(let i=0;i<80;i++){if(server.exitCode!==null)throw Error(output);try{if((await fetch(base+'/paciente/acceso')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,250));}assert.ok(ready,output);
+ const a=await api(pro,'/api/auth/register','POST',{nombre:'Profesional sintética A',email:'portal-owner@example.test',password},201);
+ await api(otherPro,'/api/auth/register','POST',{nombre:'Profesional sintética B',email:'portal-other-owner@example.test',password},201);
+ const p=await api(pro,'/api/pacientes','POST',{nombre_completo:'Adulto sintético',email:'adult@example.test',telefono:'',estado:'Tratamiento activo',motivo_consulta:'No publicar este motivo',notas_confidenciales:'INTERNAL_CLINICAL_SECRET'},201);
+ const q=await api(pro,'/api/pacientes','POST',{nombre_completo:'Segundo adulto sintético',email:'second-adult@example.test',telefono:'',estado:'Tratamiento activo'},201);
+ const path='/api/pacientes/'+p.id+'/portal';const qpath='/api/pacientes/'+q.id+'/portal';
+ await api(anonymous,'/api/paciente/ficha','GET',undefined,401);await api(pro,'/api/paciente/ficha','GET',undefined,401);
+ await api(anonymous,path,'POST',{accion:'invitar'},401);await api(otherPro,path,'GET',undefined,404);await api(otherPro,path,'POST',{accion:'revocar'},404);
+ await api(pro,path,'POST',{accion:'invitar',adulto:true,fecha_nacimiento:'2015-01-01'},400);
+ await api(pro,path,'POST',{accion:'invitar',adulto:false,fecha_nacimiento:'1990-01-01'},400);
+ const first=await api(pro,path,'POST',{accion:'invitar',adulto:true,fecha_nacimiento:'1990-01-01'});
+ assert.equal(first.correo_aceptado,false);assert.equal(first.token.length,64);
+ const invitation=await api(pro,path,'POST',{accion:'invitar',adulto:true,fecha_nacimiento:'1990-01-01'});
+ const activation={email:'adult@example.test',password,token:invitation.token,consentimiento:true};
+ await api(adult,'/api/paciente/auth/activate','POST',{...activation,token:first.token},400);
+ await api(adult,'/api/paciente/auth/activate','POST',{...activation,email:'wrong@example.test'},400);
+ await api(adult,'/api/paciente/auth/activate','POST',{...activation,consentimiento:false},400);
+ await api(adult,'/api/paciente/auth/activate','POST',activation);
+ await api(adult,'/api/paciente/auth/activate','POST',activation,400);
+ await api(adult,'/api/paciente/auth/login','POST',{email:activation.email,password:'Wrong-password-123!'},401);
+ await api(adult,'/api/paciente/auth/login','POST',{email:activation.email,password});assert.ok(adult.cookie.startsWith('emnos_patient_session='));
+ await api(adult,'/api/pacientes','GET',undefined,401);assert.equal((await api(adult,'/api/auth/me')).usuario,null);
+ let dossier=await api(adult,'/api/paciente/ficha');assert.equal(dossier.nombre,p.nombre_completo);assert.equal(dossier.fecha_nacimiento,'1990-01-01');
+ for(const secret of ['INTERNAL_CLINICAL_SECRET','No publicar este motivo','password_hash','notas_confidenciales','usuario_id'])assert.ok(!JSON.stringify(dossier).includes(secret));
+ await api(adult,'/api/paciente/ficha','POST',{accion:'guardar',version:0,datos:{telefone:'123456789',antecedentes:'Información aportada por el paciente',notas_confidenciales:'ATTEMPTED_OVERWRITE'},paciente_id:q.id});
+ assert.equal((await api(pro,'/api/pacientes/'+p.id)).paciente.notas_confidenciales,'INTERNAL_CLINICAL_SECRET');
+ await api(adult,'/api/paciente/ficha','POST',{accion:'guardar',version:0,datos:{}},409);
+ await api(adult,'/api/paciente/ficha','POST',{accion:'guardar',version:1,datos:{}},403,{Origin:'https://evil.example'});
+ assert.equal((await api(pro,path)).ficha.datos.telefone,'123456789');
+ await api(adult,'/api/paciente/ficha','POST',{accion:'peticion',tipo:'acceso_prontuario',texto:'Solicito mi prontuario.'});
+ assert.equal((await api(pro,'/api/paciente/pendientes')).length,1);
+ assert.equal((await api(otherPro,'/api/paciente/pendientes')).length,0);
+ await api(adult,'/api/paciente/pendientes','GET',undefined,401);
+ let manager=await api(pro,path);assert.equal(manager.peticiones.length,1);
+ await api(pro,path,'POST',{accion:'responder',id:manager.peticiones[0].id,respuesta:'Documento preparado en el portal.'});
+ await api(pro,path,'POST',{accion:'documento',titulo:'Prontuario preparado',tipo:'prontuario',contenido:'PUBLIC_PATIENT_RECORD',confirmar:true});
+ dossier=await api(adult,'/api/paciente/ficha');assert.equal(dossier.documentos.length,1);assert.equal(dossier.documentos[0].contenido,'PUBLIC_PATIENT_RECORD');assert.equal(dossier.peticiones[0].respuesta,'Documento preparado en el portal.');
+ const qinvite=await api(pro,qpath,'POST',{accion:'invitar',adulto:true,fecha_nacimiento:'1988-03-02'});
+ await api(otherAdult,'/api/paciente/auth/activate','POST',{email:'second-adult@example.test',password,token:qinvite.token,consentimiento:true});
+ await api(otherAdult,'/api/paciente/auth/login','POST',{email:'second-adult@example.test',password});
+ assert.equal((await api(otherAdult,'/api/paciente/ficha')).documentos.length,0);
+ assert.equal((await api(otherAdult,'/api/paciente/ficha')).ficha,null);
+ await api(pro,path,'POST',{accion:'retirar_documento',id:dossier.documentos[0].id});assert.equal((await api(adult,'/api/paciente/ficha')).documentos.length,0);
+ // Booking with the patient cookie, not a bearer link or professional session.
+ const slot=randomUUID();await c.query("INSERT INTO mymind.disponibilidad_publica(id,usuario_id,fecha_hora,duracion_minutos,modalidad) VALUES($1,$2,now()+interval '10 days',50,'Online')",[slot,a.usuario.id]);
+ const booking=await api(adult,'/api/mi-agenda','POST',{horario_id:slot,modalidad:'Online',consentimiento:true,solicitud_id:randomUUID(),seguimiento:'c'.repeat(64),paciente_id:q.id},201);
+ assert.equal((await c.query('SELECT paciente_id FROM mymind.solicitudes_cita WHERE id=$1',[booking.id])).rows[0].paciente_id,p.id);
+ assert.equal((await api(otherAdult,'/api/mi-agenda')).solicitudes.length,0);
+ await api(pro,'/api/solicitudes','POST',{id:booking.id,accion:'aceptar'});
+ assert.equal((await api(adult,'/api/paciente/ficha')).citas.length,1);
+ // Password change invalidates all previous sessions. Recovery links are one-use and expire.
+ const stale=client();await api(stale,'/api/paciente/auth/login','POST',{email:activation.email,password});
+ await api(adult,'/api/paciente/auth/password','POST',{actual:password,password:changed});
+ await api(stale,'/api/paciente/ficha','GET',undefined,401);await api(adult,'/api/paciente/ficha');
+ await api(anonymous,'/api/paciente/auth/forgot','POST',{email:activation.email},503);
+ await api(anonymous,'/api/paciente/auth/forgot','POST',{email:'unknown@example.test'},503);
+ let recovery=await api(pro,path,'POST',{accion:'recuperar'});
+ await c.query("UPDATE mymind.portal_enlaces SET vence_en=now()-interval '1 minute' WHERE paciente_id=$1",[p.id]);
+ await api(anonymous,'/api/paciente/auth/reset','POST',{email:activation.email,token:recovery.token,password},400);
+ recovery=await api(pro,path,'POST',{accion:'recuperar'});
+ await api(anonymous,'/api/paciente/auth/reset','POST',{email:activation.email,token:recovery.token,password});
+ await api(anonymous,'/api/paciente/auth/reset','POST',{email:activation.email,token:recovery.token,password},400);
+ await api(adult,'/api/paciente/ficha','GET',undefined,401);await api(adult,'/api/paciente/auth/login','POST',{email:activation.email,password});
+ await api(pro,path,'POST',{accion:'revocar'});await api(adult,'/api/paciente/ficha','GET',undefined,401);
+ await api(adult,'/api/paciente/auth/login','POST',{email:activation.email,password},401);
+ const replacement=await api(pro,path,'POST',{accion:'invitar',adulto:true,fecha_nacimiento:'1990-01-01'});
+ await api(adult,'/api/paciente/auth/activate','POST',{...activation,token:replacement.token});await api(adult,'/api/paciente/auth/login','POST',{email:activation.email,password});
+ await api(pro,'/api/pacientes/'+p.id,'PATCH',{status:'archived'});await api(adult,'/api/paciente/ficha','GET',undefined,401);
+ await api(pro,'/api/pacientes/'+p.id,'PATCH',{status:'active'});
+ await api(pro,path,'POST',{accion:'habilitar',adulto:true});
+ await api(adult,'/api/paciente/auth/login','POST',{email:activation.email,password});
+ await api(adult,'/api/paciente/ficha');
+ // Correcting a known birth date to a minor also disables access, without deleting the clinical file.
+ await c.query("INSERT INTO mymind.fichas_atencion(paciente_id,usuario_id,datos,actualizado_por) VALUES($1,$2,'{\"fecha_nacimiento\":\"2015-01-01\"}',$2)",[p.id,a.usuario.id]);
+ await api(adult,'/api/paciente/ficha','GET',undefined,401);
+ await c.query("UPDATE mymind.fichas_atencion SET datos='{\"fecha_nacimiento\":\"1990-01-01\"}' WHERE paciente_id=$1",[p.id]);
+ const hash=await c.query('SELECT password_hash FROM mymind.portal_cuentas WHERE paciente_id=$1',[p.id]);assert.notEqual(hash.rows[0].password_hash,password);assert.ok(hash.rows[0].password_hash.startsWith('scrypt:'));
+ assert.equal((await c.query('SELECT count(*)::int AS n FROM mymind.portal_enlaces WHERE token_hash=$1',[createHash('sha256').update(replacement.token).digest('hex')])).rows[0].n,0);
+ await assert.rejects(c.query("DELETE FROM mymind.portal_eventos WHERE paciente_id=$1",[p.id]),{code:'23514'});
+ await api(adult,'/api/paciente/auth/logout','POST');await api(adult,'/api/paciente/ficha','GET',undefined,401);
+ console.log('Portal verificado: adultos, invitación de un uso, acceso separado, ficha propia, documentos, peticiones, reservas 24/6, CSRF, aislamiento, contraseña, recuperación, revocación y archivo.');
+ if(process.env.PORTAL_PREVIEW==='1'){
+  await api(pro,path,'POST',{accion:'documento',titulo:'Orientações para nosso próximo encontro',tipo:'indicaciones',contenido:'Reserve um local tranquilo para a consulta online. Você pode anotar os temas que deseja conversar no próximo encontro.',confirmar:true});
+  console.log('Vista local sintética disponible en '+base+'/paciente/acceso');await new Promise(resolve=>{process.stdin.resume();process.stdin.once('data',resolve);});
+ }
+}catch(error){console.error(output);throw error;}finally{
+ if(server.exitCode===null){const stopped=once(server,'exit');server.kill();await stopped;}
+ await instance.close();
+}

@@ -2,6 +2,8 @@
 
 Implementación del 20-11-2026. Sustituye la reserva pública inmediata por una solicitud que debe responder la profesional.
 
+Actualización del 26-11-2026: los pacientes adultos también pueden agendar desde una cuenta con correo y contraseña. Ver [Portal de pacientes adultos](portal-pacientes.md). Los enlaces de esta guía son el recorrido anterior, limitado a citas.
+
 ## Recorrido
 
 1. En Pacientes, la profesional genera un enlace privado de agenda para un paciente activo. El enlace dura 30 días; renovarlo invalida el anterior. Puede revocarlo. Es una credencial: compartirlo solo con su titular. No se envía automáticamente.

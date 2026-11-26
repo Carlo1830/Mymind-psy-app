@@ -19,7 +19,8 @@
     "db:import": "node scripts/import-sqlite.mjs",
     "db:test:legacy": "node --test scripts/test-db.mjs",
     "db:check": "node scripts/check-postgres.mjs",
-    "agenda:test": "node --test scripts/test-coordination.mjs"
+    "agenda:test": "node --test scripts/test-coordination.mjs",
+    "portal:test": "node scripts/test-patient-portal.mjs"
   },
   "keywords": [],
   "author": "",

@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { field, InputError } from '@/lib/api';
 import { HttpError } from '@/lib/errors';
 import { assertNoOverlap } from '@/lib/booking';
+import { currentPatient } from '@/lib/patient-account';
 
 export const tokenDigest = (token: string) => createHash('sha256').update(token).digest('hex');
 export const newAccessToken = () => randomBytes(32).toString('hex');
@@ -17,6 +18,8 @@ export async function expireRequests(owner?: string) {
 }
 
 export async function patientAccess(request: Request) {
+  const account=await currentPatient();
+  if(account)return account;
   const token = request.headers.get('x-patient-token') || '';
   if (!/^[a-f0-9]{64}$/.test(token)) throw new HttpError(401, 'Abre el enlace privado que te compartió tu profesional.');
   const access = await db().prepare(`SELECT a.paciente_id,a.usuario_id,p.nombre_completo,u.nombre AS profesional
