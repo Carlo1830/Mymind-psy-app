@@ -2,6 +2,7 @@ import { patientTags, tagKey } from '@/lib/patient-tags';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { body, estados, failure, InputError, json, patientInput, sameOrigin } from '@/lib/api';
+import { birthDate,savePatientBirth } from '@/lib/patient-birth';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export async function GET(request: Request) {
@@ -60,8 +61,13 @@ export async function POST(request: Request) {
         const values = patientInput(value);
         let etiquetas: string[] = [];
         try { etiquetas = patientTags(value.etiquetas === undefined ? [] : value.etiquetas); } catch(e) { throw new InputError(e instanceof Error ? e.message : 'Etiquetas inválidas.'); }
-        const row = await db().prepare('INSERT INTO pacientes (nombre_completo, email, telefono, estado, motivo_consulta, notas_confidenciales, usuario_id, etiquetas) VALUES (?, ?, ?, ?, ?, ?, ?, ARRAY(SELECT jsonb_array_elements_text(?::jsonb))) RETURNING *').get(...values, user.id, JSON.stringify(etiquetas));
-        return json(row, 201);
+        const birth=birthDate(value.fecha_nacimiento);
+        const database=db();await database.begin(user.id);
+        try{
+            const row = await database.prepare('INSERT INTO pacientes (nombre_completo, email, telefono, estado, motivo_consulta, notas_confidenciales, usuario_id, etiquetas) VALUES (?, ?, ?, ?, ?, ?, ?, ARRAY(SELECT jsonb_array_elements_text(?::jsonb))) RETURNING *').get(...values, user.id, JSON.stringify(etiquetas));
+            if(birth)await savePatientBirth(String(row!.id),user.id,birth,database);
+            await database.exec('COMMIT');return json({...row,fecha_nacimiento:birth},201);
+        }catch(error){await database.exec('ROLLBACK');throw error;}
     }
     catch (error) {
         return failure(error);

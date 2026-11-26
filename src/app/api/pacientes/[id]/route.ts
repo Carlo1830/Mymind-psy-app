@@ -2,6 +2,7 @@ import { patientTags } from '@/lib/patient-tags';
 import { requireUser } from '@/lib/auth';
 import { db, patient, sessions } from '@/lib/db';
 import { body, failure, InputError, json, patientInput, sameOrigin } from '@/lib/api';
+import { birthDate,savePatientBirth } from '@/lib/patient-birth';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 type Context = {
@@ -30,8 +31,14 @@ export async function PUT(request: Request, context: Context) {
         let etiquetas: string[] = [];
         try { etiquetas = patientTags(value.etiquetas === undefined ? [] : value.etiquetas); } catch(e) { throw new InputError(e instanceof Error ? e.message : 'Etiquetas inválidas.'); }
         const tagUpdate = value.etiquetas === undefined ? '' : ', etiquetas = ARRAY(SELECT jsonb_array_elements_text(?::jsonb))';
-        const record = await db().prepare('UPDATE pacientes SET nombre_completo = ?, email = ?, telefono = ?, estado = ?, motivo_consulta = ?, notas_confidenciales = ?' + tagUpdate + ' WHERE id = ? AND usuario_id = ? RETURNING *').get(...values, ...(value.etiquetas === undefined ? [] : [JSON.stringify(etiquetas)]), id, user.id);
-        return record ? json(record) : json({ error: 'Paciente no encontrado.' }, 404);
+        const birth=value.fecha_nacimiento===undefined?undefined:birthDate(value.fecha_nacimiento);
+        const database=db();await database.begin(user.id);
+        try{
+            const record = await database.prepare('UPDATE pacientes SET nombre_completo = ?, email = ?, telefono = ?, estado = ?, motivo_consulta = ?, notas_confidenciales = ?' + tagUpdate + ' WHERE id = ? AND usuario_id = ? RETURNING *').get(...values, ...(value.etiquetas === undefined ? [] : [JSON.stringify(etiquetas)]), id, user.id);
+            if(record&&birth!==undefined)await savePatientBirth(id,user.id,birth,database);
+            await database.exec('COMMIT');
+            return record ? json({...record,...(birth!==undefined?{fecha_nacimiento:birth}:{})}) : json({ error: 'Paciente no encontrado.' }, 404);
+        }catch(error){await database.exec('ROLLBACK');throw error;}
     }
     catch (error) {
         return failure(error);

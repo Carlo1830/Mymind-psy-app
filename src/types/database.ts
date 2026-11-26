@@ -6,6 +6,7 @@ export interface Paciente {
   etiquetas: string[];
   id: string;
   nombre_completo: string;
+  fecha_nacimiento: string | null;
   fuente_captacion: string;
   email: string | null;
   telefono: string | null;

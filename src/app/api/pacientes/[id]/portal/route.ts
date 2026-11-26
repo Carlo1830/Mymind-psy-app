@@ -4,6 +4,7 @@ import { db,patient } from '@/lib/db';
 import { body,field,failure,json,sameOrigin,InputError } from '@/lib/api';
 import { HttpError } from '@/lib/errors';
 import { adultBirth,portalDigest,portalToken,portalEmail,portalEvent,sendPortalLink } from '@/lib/patient-account';
+import { savePatientBirth } from '@/lib/patient-birth';
 export const runtime='nodejs';export const dynamic='force-dynamic';
 type Context={params:Promise<{id:string}>};
 export async function GET(_request:Request,context:Context){try{
@@ -24,12 +25,14 @@ export async function POST(request:Request,context:Context){try{
   const account=await d.prepare('SELECT *,fecha_nacimiento::text AS fecha_nacimiento FROM mymind.portal_cuentas WHERE paciente_id=? FOR UPDATE').get(id);
   switch(value.accion){
    case 'invitar':{
-    if(value.adulto!==true)throw new InputError('Confirma que habilitas a un paciente adulto.');email=portalEmail(p.email);const birth=adultBirth(value.fecha_nacimiento);
+    if(value.adulto!==true)throw new InputError('Confirma que habilitas a un paciente adulto.');email=portalEmail(p.email);
     const known=await d.prepare("SELECT datos->>'fecha_nacimiento' AS fecha FROM mymind.fichas_atencion WHERE paciente_id=?").get(id);
+    const birth=adultBirth(value.fecha_nacimiento||known?.fecha||account?.fecha_nacimiento);
     if(known?.fecha){adultBirth(known.fecha);if(known.fecha!==birth)throw new InputError('La fecha no coincide con la ficha clínica. Corrígela antes de invitar.');}
     if(account?.password_hash&&account.habilitado)throw new InputError('La cuenta ya está activada. Usa recuperación, o revócala antes de crear una nueva invitación.');
     const duplicate=await d.prepare('SELECT paciente_id FROM mymind.portal_cuentas WHERE email=? AND paciente_id<>?').get(email,id);
     if(duplicate)throw new InputError('Ese correo ya tiene una cuenta. Revisa si hay una ficha duplicada.');
+    await savePatientBirth(id,user.id,birth,d);
     await d.prepare('INSERT INTO mymind.portal_cuentas(paciente_id,usuario_id,email,fecha_nacimiento) VALUES(?,?,?,?) ON CONFLICT(paciente_id) DO UPDATE SET email=EXCLUDED.email,fecha_nacimiento=EXCLUDED.fecha_nacimiento,habilitado=true,password_hash=NULL,activado_en=NULL,version=mymind.portal_cuentas.version+1').run(id,user.id,email,birth);
     await d.prepare('DELETE FROM mymind.portal_sesiones WHERE paciente_id=?').run(id);
     await d.prepare('DELETE FROM mymind.portal_enlaces WHERE paciente_id=?').run(id);

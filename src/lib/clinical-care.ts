@@ -4,6 +4,7 @@ import { db,patient } from '@/lib/db';
 import { field,InputError } from '@/lib/api';
 import { assertNoOverlap } from '@/lib/booking';
 import { HttpError } from '@/lib/errors';
+import { syncPortalBirth } from '@/lib/patient-birth';
 import { profileLabels,noteLabels,type NoteContent } from '@/types/clinical-care';
 const conflict=()=>new HttpError(409,'Este registro cambió en otra ventana. Tu texto se conserva: revisa la versión actual antes de continuar.');
 function version(value:unknown){if(typeof value!=='number'||!Number.isSafeInteger(value)||value<0)throw new InputError('Versión inválida.');return value;}
@@ -42,6 +43,7 @@ export async function mutateCare(id:string,owner:string,value:Record<string,unkn
    const raw=value.datos;if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new InputError('Ficha inválida.');
    const datos:Record<string,string>={};for(const key of Object.keys(profileLabels)){datos[key]=field((raw as Record<string,unknown>)[key],profileLabels[key as keyof typeof profileLabels],200)||'';}
    const birth=dateOnly(datos.fecha_nacimiento,'Fecha de nacimiento');if(birth&&birth>new Date().toISOString().slice(0,10))throw new InputError('La fecha de nacimiento no puede ser futura.');
+   await syncPortalBirth(id,birth,d);
    result=await d.prepare('INSERT INTO mymind.fichas_atencion(paciente_id,usuario_id,datos,actualizado_por) VALUES(?,?,?::jsonb,?) ON CONFLICT(paciente_id) DO UPDATE SET datos=EXCLUDED.datos,version=mymind.fichas_atencion.version+1,actualizado_por=EXCLUDED.actualizado_por,actualizado_en=now() RETURNING *').get(id,owner,JSON.stringify(datos),owner);action='ficha_actualizada';
   }else if(value.accion==='objetivo_guardar'){
    resource=identifier(value.id);const current=await d.prepare('SELECT * FROM mymind.objetivos_terapeuticos WHERE id=?').get(resource);
