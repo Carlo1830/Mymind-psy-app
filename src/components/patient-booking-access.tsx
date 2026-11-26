@@ -1,5 +1,6 @@
 "use client";
 import { useState } from 'react';
+import { CopyableLink } from '@/components/copyable-link';
 export function PatientBookingAccess({patientId}:{patientId:string}){
  const [link,setLink]=useState('');const [busy,setBusy]=useState(false);const [message,setMessage]=useState('');
  async function change(revoke=false){
@@ -15,7 +16,7 @@ export function PatientBookingAccess({patientId}:{patientId:string}){
   <h3 className="font-semibold text-teal-900">Acceso del paciente a sus citas</h3>
   <p className="my-3 text-sm text-slate-500">Comparte este enlace únicamente con el paciente. Puede elegir horarios y consultar sus solicitudes. Al renovarlo se revoca el anterior.</p>
   <div className="flex flex-wrap gap-3"><button className="secondary" disabled={busy} onClick={()=>void change()}>Crear o renovar enlace privado</button><button className="secondary" disabled={busy} onClick={()=>void change(true)}>Revocar acceso</button></div>
-  {link&&<label className="mt-4 block text-sm">Enlace privado<input readOnly className="field" value={link} onFocus={event=>event.currentTarget.select()}/></label>}
+  {link&&<CopyableLink key={link} value={link} label="Enlace privado"/>}
   {message&&<p role="status" className="mt-3 text-sm text-teal-900">{message}</p>}
  </section>;
 }
